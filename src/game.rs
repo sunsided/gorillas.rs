@@ -1,0 +1,1082 @@
+use rand::{RngExt, SeedableRng, rngs::SmallRng};
+
+use crate::render::{Frame, PrimitiveBatch};
+
+pub const LOGICAL_WIDTH: u32 = 640;
+pub const LOGICAL_HEIGHT: u32 = 350;
+
+const BACKGROUND: [f32; 4] = palette_attribute(0);
+const OBJECT: [f32; 4] = palette_attribute(1);
+const EXPLOSION: [f32; 4] = palette_attribute(2);
+const LIT_WINDOW: [f32; 4] = palette_attribute(14);
+const DARK_WINDOW: [f32; 4] = palette_attribute(8);
+const SUN: [f32; 4] = palette_attribute(3);
+const BOTTOM_LINE: f32 = 335.0;
+const GORILLA_HEIGHT: f32 = 25.0;
+const GORILLA_X_ADJUST: f32 = 14.0;
+const GORILLA_Y_ADJUST: f32 = 30.0;
+const HEIGHT_INCREMENT: f32 = 10.0;
+const DEFAULT_BUILDING_WIDTH: u32 = 37;
+const RANDOM_HEIGHT: u32 = 120;
+const WINDOW_WIDTH: f32 = 3.0;
+const WINDOW_HEIGHT: f32 = 6.0;
+const WINDOW_VERTICAL_SPACING: f32 = 15.0;
+const WINDOW_HORIZONTAL_SPACING: f32 = 10.0;
+const BASIC_CIRCLE_Y_ASPECT: f32 = 1.0;
+const PROJECTILE_TIME_STEP: f32 = 0.1;
+#[cfg(test)]
+const MIN_THROW_VELOCITY: f32 = 2.0;
+const DEMO_SHOT_ANGLE: f32 = 55.0;
+const DEMO_SHOT_VELOCITY: f32 = 75.0;
+const DEFAULT_GRAVITY: f32 = 9.8;
+
+const fn palette_attribute(attribute: u8) -> [f32; 4] {
+    let [red, green, blue] = palette_attribute_rgb(attribute);
+    [
+        red as f32 / 255.0,
+        green as f32 / 255.0,
+        blue as f32 / 255.0,
+        1.0,
+    ]
+}
+
+const fn palette_attribute_rgb(attribute: u8) -> [u8; 3] {
+    ega_palette_rgb(palette_register(attribute))
+}
+
+const fn palette_register(attribute: u8) -> u8 {
+    match attribute {
+        0 => 1,
+        1 => 46,
+        2 => 44,
+        3 => 54,
+        5 => 7,
+        6 => 4,
+        7 => 3,
+        9 => 63,
+        _ => default_ega_register(attribute),
+    }
+}
+
+const fn default_ega_register(attribute: u8) -> u8 {
+    match attribute {
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        4 => 4,
+        5 => 5,
+        6 => 20,
+        7 => 7,
+        8 => 56,
+        9 => 57,
+        10 => 58,
+        11 => 59,
+        12 => 60,
+        13 => 61,
+        14 => 62,
+        15 => 63,
+        _ => 0,
+    }
+}
+
+const fn ega_palette_rgb(value: u8) -> [u8; 3] {
+    [
+        ega_component(value, 2, 5),
+        ega_component(value, 1, 4),
+        ega_component(value, 0, 3),
+    ]
+}
+
+const fn ega_component(value: u8, primary_bit: u8, secondary_bit: u8) -> u8 {
+    let primary = (value >> primary_bit) & 1;
+    let secondary = (value >> secondary_bit) & 1;
+
+    match primary * 2 + secondary {
+        0 => 0x00,
+        1 => 0x55,
+        2 => 0xAA,
+        _ => 0xFF,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub enum GorillaArms {
+    RightUp,
+    LeftUp,
+    Down,
+}
+
+#[derive(Debug)]
+pub struct Game {
+    round: Round,
+    gorillas: [Gorilla; 2],
+    projectile: Option<Projectile>,
+}
+
+impl Game {
+    pub fn new() -> Self {
+        let (round, gorillas) = make_round(rand::random());
+
+        let projectile = Some(Projectile::new(
+            gorillas[0],
+            Player::One,
+            DEMO_SHOT_ANGLE,
+            DEMO_SHOT_VELOCITY,
+        ));
+
+        Self {
+            round,
+            gorillas,
+            projectile,
+        }
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        if let Some(projectile) = self.projectile.as_mut() {
+            projectile.advance(dt);
+
+            let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
+            if !sample.on_screen {
+                *projectile = Projectile::new(
+                    self.gorillas[0],
+                    Player::One,
+                    DEMO_SHOT_ANGLE,
+                    DEMO_SHOT_VELOCITY,
+                );
+            }
+        }
+    }
+
+    pub fn frame(&self) -> Frame {
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        draw_sun(&mut canvas, false);
+        draw_city(&mut canvas, &self.round.buildings);
+        draw_wind(&mut canvas, self.round.wind);
+        draw_gorilla(&mut canvas, self.gorillas[0], GorillaArms::Down);
+        draw_gorilla(&mut canvas, self.gorillas[1], GorillaArms::Down);
+        if let Some(projectile) = self.projectile {
+            let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
+            if sample.on_screen {
+                draw_banana(&mut canvas, sample.x, sample.y, sample.rotation);
+            }
+        }
+
+        Frame {
+            logical_width: LOGICAL_WIDTH,
+            logical_height: LOGICAL_HEIGHT,
+            clear_color: BACKGROUND,
+            vertices: canvas.into_vertices(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Round {
+    buildings: Vec<Building>,
+    wind: i32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Building {
+    x: f32,
+    width: f32,
+    height: f32,
+    color: [f32; 4],
+    windows: Vec<WindowRect>,
+}
+
+impl Building {
+    fn top(&self) -> f32 {
+        BOTTOM_LINE - self.height
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WindowRect {
+    x: f32,
+    y: f32,
+    lit: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Gorilla {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum Player {
+    One,
+    Two,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BananaRotation {
+    Left,
+    Up,
+    Down,
+    Right,
+}
+
+impl BananaRotation {
+    fn from_frame(frame: u8) -> Self {
+        match frame % 4 {
+            0 => Self::Left,
+            1 => Self::Up,
+            2 => Self::Down,
+            _ => Self::Right,
+        }
+    }
+
+    fn sprite(self) -> &'static [&'static str] {
+        match self {
+            Self::Left => &["..##..", ".####.", "######", ".####.", "..##.."],
+            Self::Up => &["..#..", ".###.", ".###.", "##.##", "#...#"],
+            Self::Down => &["#...#", "##.##", ".###.", ".###.", "..#.."],
+            Self::Right => &["..##..", ".####.", "######", ".####.", "..##.."],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ProjectileSample {
+    x: f32,
+    y: f32,
+    rotation: BananaRotation,
+    on_screen: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg(test)]
+enum SlowShotOutcome {
+    Flying,
+    SelfHit { player: Player },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Projectile {
+    start: Gorilla,
+    player: Player,
+    angle_degrees: f32,
+    velocity: f32,
+    elapsed: f32,
+}
+
+impl Projectile {
+    fn new(start: Gorilla, player: Player, angle_degrees: f32, velocity: f32) -> Self {
+        Self {
+            start,
+            player,
+            angle_degrees,
+            velocity,
+            elapsed: 0.0,
+        }
+    }
+
+    fn advance(&mut self, dt: f32) {
+        let steps = (dt / PROJECTILE_TIME_STEP).floor().max(1.0);
+        self.elapsed += steps * PROJECTILE_TIME_STEP;
+    }
+
+    fn sample(self, wind: i32, gravity: f32) -> ProjectileSample {
+        projectile_sample(
+            self.start,
+            self.angle_degrees,
+            self.velocity,
+            self.player,
+            wind,
+            gravity,
+            self.elapsed,
+        )
+    }
+}
+
+struct Canvas {
+    width: u32,
+    height: u32,
+    pixels: Vec<Option<[f32; 4]>>,
+}
+
+impl Canvas {
+    fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            pixels: vec![None; (width * height) as usize],
+        }
+    }
+
+    fn into_vertices(self) -> Vec<crate::render::Vertex> {
+        let mut batch = PrimitiveBatch::new(self.width as f32, self.height as f32);
+
+        for y in 0..self.height as usize {
+            let mut x = 0usize;
+            while x < self.width as usize {
+                let Some(color) = self.pixels[y * self.width as usize + x] else {
+                    x += 1;
+                    continue;
+                };
+
+                let start = x;
+                x += 1;
+                while x < self.width as usize
+                    && self.pixels[y * self.width as usize + x] == Some(color)
+                {
+                    x += 1;
+                }
+
+                batch.rect(start as f32, y as f32, (x - start) as f32, 1.0, color);
+            }
+        }
+
+        batch.into_vertices()
+    }
+
+    fn pixel(&mut self, x: f32, y: f32, color: [f32; 4]) {
+        let x = x.round() as i32;
+        let y = y.round() as i32;
+        if !(0..self.width as i32).contains(&x) || !(0..self.height as i32).contains(&y) {
+            return;
+        }
+
+        let index = y as usize * self.width as usize + x as usize;
+        self.pixels[index] = Some(color);
+    }
+
+    fn rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) {
+        let x0 = x.round() as i32;
+        let y0 = y.round() as i32;
+        let x1 = (x + width - 1.0).round() as i32;
+        let y1 = (y + height - 1.0).round() as i32;
+        self.fill_rect_inclusive(x0, y0, x1, y1, color);
+    }
+
+    fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: [f32; 4]) {
+        let half = ((thickness.max(1.0).round() as i32) - 1) / 2;
+        let horizontalish = (x1 - x0).abs() >= (y1 - y0).abs();
+
+        for offset in -half..=half {
+            if horizontalish {
+                self.line_single(x0, y0 + offset as f32, x1, y1 + offset as f32, color);
+            } else {
+                self.line_single(x0 + offset as f32, y0, x1 + offset as f32, y1, color);
+            }
+        }
+    }
+
+    fn circle(&mut self, x: f32, y: f32, radius: f32, _segments: usize, color: [f32; 4]) {
+        let min_x = (x - radius).floor() as i32;
+        let max_x = (x + radius).ceil() as i32;
+        let min_y = (y - radius).floor() as i32;
+        let max_y = (y + radius).ceil() as i32;
+        let radius_sq = radius * radius;
+
+        for py in min_y..=max_y {
+            for px in min_x..=max_x {
+                let dx = px as f32 - x;
+                let dy = (py as f32 - y) * BASIC_CIRCLE_Y_ASPECT;
+                if dx * dx + dy * dy <= radius_sq + 0.5 {
+                    self.pixel(px as f32, py as f32, color);
+                }
+            }
+        }
+    }
+
+    fn arc(
+        &mut self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        start: f32,
+        end: f32,
+        thickness: f32,
+        color: [f32; 4],
+    ) {
+        let start = start.rem_euclid(std::f32::consts::TAU);
+        let mut end = end;
+
+        while end < start {
+            end += std::f32::consts::TAU;
+        }
+
+        let half_band = ((thickness - 1.0).max(0.0) * 0.5) + 0.25;
+        let sweep = end - start;
+        let steps = (radius * sweep.abs() * 6.0).ceil().max(1.0) as usize;
+        let radius_steps = (half_band * 2.0).ceil().max(1.0) as usize;
+
+        for radius_step in 0..=radius_steps {
+            let band_offset = if radius_steps == 0 {
+                0.0
+            } else {
+                -half_band + radius_step as f32 * (half_band * 2.0 / radius_steps as f32)
+            };
+            let plotted_radius = (radius + band_offset).max(0.0);
+
+            for step in 0..=steps {
+                let angle = start + sweep * step as f32 / steps as f32;
+                let px = x + plotted_radius * angle.cos();
+                let py = y - (plotted_radius * angle.sin()) / BASIC_CIRCLE_Y_ASPECT;
+                self.pixel(px, py, color);
+            }
+        }
+    }
+
+    fn fill_rect_inclusive(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [f32; 4]) {
+        for y in y0.min(y1)..=y0.max(y1) {
+            for x in x0.min(x1)..=x0.max(x1) {
+                self.pixel(x as f32, y as f32, color);
+            }
+        }
+    }
+
+    fn line_single(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
+        let mut x0 = x0.round() as i32;
+        let mut y0 = y0.round() as i32;
+        let x1 = x1.round() as i32;
+        let y1 = y1.round() as i32;
+        let dx = (x1 - x0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let dy = -(y1 - y0).abs();
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+
+        loop {
+            self.pixel(x0 as f32, y0 as f32, color);
+            if x0 == x1 && y0 == y1 {
+                break;
+            }
+
+            let e2 = err * 2;
+            if e2 >= dy {
+                err += dy;
+                x0 += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+}
+
+fn make_round(seed: u64) -> (Round, [Gorilla; 2]) {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    let round = make_cityscape_with_rng(&mut rng);
+    let gorillas = place_gorillas_with_rng(&round.buildings, &mut rng);
+
+    (round, gorillas)
+}
+
+#[cfg(test)]
+fn make_cityscape_with_seed(seed: u64) -> Round {
+    let mut rng = SmallRng::seed_from_u64(seed);
+    make_cityscape_with_rng(&mut rng)
+}
+
+fn make_cityscape_with_rng(rng: &mut SmallRng) -> Round {
+    let mut buildings = Vec::new();
+    let slope = fn_ran(rng, 6);
+    let mut new_height = match slope {
+        1 | 3..=5 => 15.0,
+        _ => 130.0,
+    };
+    let mut x = 2.0;
+
+    while x <= LOGICAL_WIDTH as f32 - 10.0 {
+        match slope {
+            1 => new_height += HEIGHT_INCREMENT,
+            2 => new_height -= HEIGHT_INCREMENT,
+            3..=5 if x > LOGICAL_WIDTH as f32 * 0.5 => new_height -= 2.0 * HEIGHT_INCREMENT,
+            3..=5 => new_height += 2.0 * HEIGHT_INCREMENT,
+            // The BASIC source has an unreachable CASE 4 here after CASE 3 TO 5.
+            // Keep the documented inverted-V intent for slope 6.
+            6 if x > LOGICAL_WIDTH as f32 * 0.5 => new_height += 20.0,
+            6 => new_height -= 20.0,
+            _ => {}
+        }
+
+        let mut width = fn_ran(rng, DEFAULT_BUILDING_WIDTH) as f32 + DEFAULT_BUILDING_WIDTH as f32;
+        if x + width > LOGICAL_WIDTH as f32 {
+            width = LOGICAL_WIDTH as f32 - x - 2.0;
+        }
+
+        let mut height = fn_ran(rng, RANDOM_HEIGHT) as f32 + new_height;
+        if height < HEIGHT_INCREMENT {
+            height = HEIGHT_INCREMENT;
+        }
+
+        let top = BOTTOM_LINE - height;
+        if top <= GORILLA_HEIGHT {
+            height = GORILLA_HEIGHT - 5.0;
+        }
+
+        let color = building_color((fn_ran(rng, 3) + 4) as u8);
+        let windows = make_windows(rng, x, width, height);
+        buildings.push(Building {
+            x,
+            width,
+            height,
+            color,
+            windows,
+        });
+        x += width + 2.0;
+    }
+
+    let wind = make_wind(rng);
+
+    Round { buildings, wind }
+}
+
+fn make_windows(
+    rng: &mut SmallRng,
+    building_x: f32,
+    building_width: f32,
+    height: f32,
+) -> Vec<WindowRect> {
+    let mut windows = Vec::new();
+    let mut x = building_x + 3.0;
+
+    while x < building_x + building_width - 3.0 {
+        let mut i = height - 3.0;
+        while i >= 7.0 {
+            windows.push(WindowRect {
+                x,
+                y: BOTTOM_LINE - i,
+                lit: fn_ran(rng, 4) != 1,
+            });
+            i -= WINDOW_VERTICAL_SPACING;
+        }
+        x += WINDOW_HORIZONTAL_SPACING;
+    }
+
+    windows
+}
+
+fn make_wind(rng: &mut SmallRng) -> i32 {
+    let mut wind = fn_ran(rng, 10) as i32 - 5;
+    if fn_ran(rng, 3) == 1 {
+        if wind > 0 {
+            wind += fn_ran(rng, 10) as i32;
+        } else {
+            wind -= fn_ran(rng, 10) as i32;
+        }
+    }
+
+    wind
+}
+
+fn place_gorillas_with_rng(buildings: &[Building], rng: &mut SmallRng) -> [Gorilla; 2] {
+    if buildings.len() < 4 {
+        return [
+            Gorilla { x: 140.0, y: 200.0 },
+            Gorilla { x: 500.0, y: 200.0 },
+        ];
+    }
+
+    let left_index = fn_ran(rng, 2) as usize;
+    let right_index = buildings.len() - 1 - fn_ran(rng, 2) as usize;
+    let left = gorilla_on(buildings, left_index);
+    let right = gorilla_on(buildings, right_index);
+
+    [left, right]
+}
+
+fn gorilla_on(buildings: &[Building], building_index: usize) -> Gorilla {
+    let building = &buildings[building_index];
+    let next_x = buildings
+        .get(building_index + 1)
+        .map_or(building.x + building.width + 2.0, |next| next.x);
+    let width = next_x - building.x;
+
+    Gorilla {
+        x: building.x + width * 0.5 - GORILLA_X_ADJUST,
+        y: building.top() - GORILLA_Y_ADJUST,
+    }
+}
+
+fn fn_ran(rng: &mut SmallRng, upper: u32) -> u32 {
+    rng.random_range(1..=upper)
+}
+
+fn projectile_start(gorilla: Gorilla, player: Player) -> (f32, f32) {
+    let x = match player {
+        Player::One => gorilla.x,
+        Player::Two => gorilla.x + 25.0,
+    };
+    let y = gorilla.y - 4.0 - 3.0;
+
+    (x, y)
+}
+
+fn projectile_sample(
+    gorilla: Gorilla,
+    angle_degrees: f32,
+    velocity: f32,
+    player: Player,
+    wind: i32,
+    gravity: f32,
+    t: f32,
+) -> ProjectileSample {
+    let (start_x, start_y) = projectile_start(gorilla, player);
+    let angle = angle_degrees.to_radians();
+    let init_x_velocity = angle.cos() * velocity;
+    let init_y_velocity = angle.sin() * velocity;
+    let x = start_x + init_x_velocity * t + 0.5 * (wind as f32 / 5.0) * t.powi(2);
+    let y = start_y
+        + (-init_y_velocity * t + 0.5 * gravity * t.powi(2)) * (LOGICAL_HEIGHT as f32 / 350.0);
+    let rotation = BananaRotation::from_frame((t / PROJECTILE_TIME_STEP).round() as u8);
+
+    ProjectileSample {
+        x,
+        y,
+        rotation,
+        on_screen: projectile_on_screen(x, y),
+    }
+}
+
+fn projectile_on_screen(x: f32, y: f32) -> bool {
+    x < LOGICAL_WIDTH as f32 - 10.0 && x > 3.0 && y < LOGICAL_HEIGHT as f32 - 3.0
+}
+
+#[cfg(test)]
+fn slow_shot_outcome(velocity: f32, player: Player) -> SlowShotOutcome {
+    if velocity < MIN_THROW_VELOCITY {
+        SlowShotOutcome::SelfHit { player }
+    } else {
+        SlowShotOutcome::Flying
+    }
+}
+
+fn draw_city(canvas: &mut Canvas, buildings: &[Building]) {
+    for building in buildings {
+        let y = building.top();
+        canvas.rect(
+            building.x - 1.0,
+            y - 1.0,
+            building.width + 2.0,
+            building.height + 2.0,
+            BACKGROUND,
+        );
+        canvas.rect(
+            building.x,
+            y,
+            building.width,
+            building.height,
+            building.color,
+        );
+        draw_windows(canvas, building);
+    }
+}
+
+fn draw_windows(canvas: &mut Canvas, building: &Building) {
+    for window in &building.windows {
+        let color = if window.lit { LIT_WINDOW } else { DARK_WINDOW };
+        canvas.rect(
+            window.x,
+            window.y,
+            WINDOW_WIDTH + 1.0,
+            WINDOW_HEIGHT + 1.0,
+            color,
+        );
+    }
+}
+
+fn building_color(attribute: u8) -> [f32; 4] {
+    palette_attribute(attribute)
+}
+
+fn draw_wind(canvas: &mut Canvas, wind: i32) {
+    if wind == 0 {
+        return;
+    }
+
+    let start_x = LOGICAL_WIDTH as f32 * 0.5;
+    let y = LOGICAL_HEIGHT as f32 - 5.0;
+    let wind_line = wind as f32 * 3.0 * (LOGICAL_WIDTH / 320) as f32;
+    let end_x = start_x + wind_line;
+    let arrow_dir = if wind > 0 { -2.0 } else { 2.0 };
+
+    canvas.line(start_x, y, end_x, y, 1.0, EXPLOSION);
+    canvas.line(end_x, y, end_x + arrow_dir, y - 2.0, 1.0, EXPLOSION);
+    canvas.line(end_x, y, end_x + arrow_dir, y + 2.0, 1.0, EXPLOSION);
+}
+
+fn draw_banana(canvas: &mut Canvas, x: f32, y: f32, rotation: BananaRotation) {
+    for (row, line) in rotation.sprite().iter().enumerate() {
+        for (column, pixel) in line.bytes().enumerate() {
+            if pixel == b'#' {
+                canvas.pixel(x + column as f32, y + row as f32, OBJECT);
+            }
+        }
+    }
+}
+
+fn draw_sun(canvas: &mut Canvas, shocked: bool) {
+    let x = LOGICAL_WIDTH as f32 * 0.5;
+    let y = 25.0;
+
+    canvas.circle(x, y, 12.0, 36, SUN);
+    canvas.line(x - 20.0, y, x + 20.0, y, 2.0, SUN);
+    canvas.line(x, y - 15.0, x, y + 15.0, 2.0, SUN);
+    canvas.line(x - 15.0, y - 10.0, x + 15.0, y + 10.0, 2.0, SUN);
+    canvas.line(x - 15.0, y + 10.0, x + 15.0, y - 10.0, 2.0, SUN);
+    canvas.line(x - 8.0, y - 13.0, x + 8.0, y + 13.0, 2.0, SUN);
+    canvas.line(x - 8.0, y + 13.0, x + 8.0, y - 13.0, 2.0, SUN);
+    canvas.line(x - 18.0, y - 5.0, x + 18.0, y + 5.0, 2.0, SUN);
+    canvas.line(x - 18.0, y + 5.0, x + 18.0, y - 5.0, 2.0, SUN);
+
+    canvas.circle(x - 3.0, y - 2.0, 1.4, 10, BACKGROUND);
+    canvas.circle(x + 3.0, y - 2.0, 1.4, 10, BACKGROUND);
+    if shocked {
+        canvas.circle(x, y + 5.0, 3.0, 18, BACKGROUND);
+    } else {
+        basic_arc(canvas, x, y, 8.0, 210.0, 330.0, BACKGROUND);
+    }
+}
+
+fn draw_gorilla(canvas: &mut Canvas, gorilla: Gorilla, arms: GorillaArms) {
+    let x = gorilla.x;
+    let y = gorilla.y;
+
+    basic_fill_rect(canvas, x - 4.0, y, x + 2.9, y + 6.0, OBJECT);
+    basic_fill_rect(canvas, x - 5.0, y + 2.0, x + 4.0, y + 4.0, OBJECT);
+    basic_line(canvas, x - 3.0, y + 2.0, x + 2.0, y + 2.0, BACKGROUND);
+    basic_pset(canvas, x - 2.0, y + 4.0, BACKGROUND);
+    basic_pset(canvas, x - 1.0, y + 4.0, BACKGROUND);
+    basic_pset(canvas, x + 1.0, y + 4.0, BACKGROUND);
+    basic_pset(canvas, x + 2.0, y + 4.0, BACKGROUND);
+    basic_line(canvas, x - 3.0, y + 7.0, x + 2.0, y + 7.0, OBJECT);
+
+    basic_fill_rect(canvas, x - 8.0, y + 8.0, x + 6.9, y + 14.0, OBJECT);
+    basic_fill_rect(canvas, x - 6.0, y + 15.0, x + 4.9, y + 20.0, OBJECT);
+
+    for i in 0..=4 {
+        let offset = i as f32;
+        basic_arc(canvas, x + offset, y + 25.0, 10.0, 135.0, 202.5, OBJECT);
+        basic_arc(
+            canvas,
+            x - 6.0 + offset,
+            y + 25.0,
+            10.0,
+            337.5,
+            405.0,
+            OBJECT,
+        );
+    }
+
+    basic_arc(canvas, x - 5.0, y + 10.0, 5.0, 270.0, 360.0, BACKGROUND);
+    basic_arc(canvas, x + 5.0, y + 10.0, 5.0, 180.0, 270.0, BACKGROUND);
+
+    match arms {
+        GorillaArms::RightUp => {
+            for i in -5..=-1 {
+                let offset = i as f32;
+                basic_arc(canvas, x + offset, y + 14.0, 9.0, 135.0, 225.0, OBJECT);
+                basic_arc(canvas, x + 5.0 + offset, y + 4.0, 9.0, 315.0, 405.0, OBJECT);
+            }
+        }
+        GorillaArms::LeftUp => {
+            for i in -5..=-1 {
+                let offset = i as f32;
+                basic_arc(canvas, x + offset, y + 4.0, 9.0, 135.0, 225.0, OBJECT);
+                basic_arc(
+                    canvas,
+                    x + 5.0 + offset,
+                    y + 14.0,
+                    9.0,
+                    315.0,
+                    405.0,
+                    OBJECT,
+                );
+            }
+        }
+        GorillaArms::Down => {
+            for i in -5..=-1 {
+                let offset = i as f32;
+                basic_arc(canvas, x + offset, y + 14.0, 9.0, 135.0, 225.0, OBJECT);
+                basic_arc(
+                    canvas,
+                    x + 5.0 + offset,
+                    y + 14.0,
+                    9.0,
+                    315.0,
+                    405.0,
+                    OBJECT,
+                );
+            }
+        }
+    }
+}
+
+fn basic_fill_rect(canvas: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
+    canvas.fill_rect_inclusive(
+        x0.round() as i32,
+        y0.round() as i32,
+        x1.round() as i32,
+        y1.round() as i32,
+        color,
+    );
+}
+
+fn basic_line(canvas: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
+    canvas.line_single(x0, y0, x1, y1, color);
+}
+
+fn basic_pset(canvas: &mut Canvas, x: f32, y: f32, color: [f32; 4]) {
+    canvas.pixel(x.round(), y.round(), color);
+}
+
+fn basic_arc(
+    canvas: &mut Canvas,
+    x: f32,
+    y: f32,
+    radius: f32,
+    start_degrees: f32,
+    end_degrees: f32,
+    color: [f32; 4],
+) {
+    let start = start_degrees.to_radians();
+    let end = end_degrees.to_radians();
+    canvas.arc(x, y, radius, start, end, 1.0, color);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seeded_cityscape_is_deterministic() {
+        let first = make_cityscape_with_seed(1991);
+        let second = make_cityscape_with_seed(1991);
+
+        assert_eq!(first, second);
+        assert!(!first.buildings.is_empty());
+    }
+
+    #[test]
+    fn cityscape_uses_ega_building_and_window_bounds() {
+        let round = make_cityscape_with_seed(1991);
+        let first = &round.buildings[0];
+
+        assert_eq!(first.x, 2.0);
+        assert!(first.width >= DEFAULT_BUILDING_WIDTH as f32 + 1.0);
+        assert!(first.width <= DEFAULT_BUILDING_WIDTH as f32 * 2.0);
+        assert!(first.top() > GORILLA_HEIGHT);
+        assert!(first.windows.iter().all(|window| {
+            window.x >= first.x + 3.0
+                && window.x < first.x + first.width - 3.0
+                && window.y >= first.top()
+                && window.y + WINDOW_HEIGHT <= BOTTOM_LINE
+        }));
+    }
+
+    #[test]
+    fn happy_sun_mouth_renders_below_center() {
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        draw_sun(&mut canvas, false);
+
+        let x = (LOGICAL_WIDTH / 2) as usize;
+        let y = 25usize;
+        let lower_index = (y + 8) * LOGICAL_WIDTH as usize + x;
+        let upper_index = (y - 8) * LOGICAL_WIDTH as usize + x;
+
+        assert_eq!(canvas.pixels[lower_index], Some(BACKGROUND));
+        assert_ne!(canvas.pixels[upper_index], Some(BACKGROUND));
+    }
+
+    #[test]
+    fn gorillas_use_second_or_third_building_from_edges() {
+        let buildings = test_buildings();
+        let mut rng = SmallRng::seed_from_u64(4);
+        let gorillas = place_gorillas_with_rng(&buildings, &mut rng);
+        let left_candidates = [gorilla_on(&buildings, 1), gorilla_on(&buildings, 2)];
+        let right_candidates = [
+            gorilla_on(&buildings, buildings.len() - 2),
+            gorilla_on(&buildings, buildings.len() - 3),
+        ];
+
+        assert!(left_candidates.contains(&gorillas[0]));
+        assert!(right_candidates.contains(&gorillas[1]));
+    }
+
+    #[test]
+    fn gorilla_position_uses_original_ega_offsets() {
+        let buildings = test_buildings();
+        let gorilla = gorilla_on(&buildings, 1);
+        let expected_width = buildings[2].x - buildings[1].x;
+
+        assert_eq!(
+            gorilla,
+            Gorilla {
+                x: buildings[1].x + expected_width * 0.5 - GORILLA_X_ADJUST,
+                y: buildings[1].top() - GORILLA_Y_ADJUST,
+            }
+        );
+    }
+
+    #[test]
+    fn palette_keeps_standard_window_and_dark_gray_attributes() {
+        assert_eq!(palette_attribute_rgb(14), [0xFF, 0xFF, 0x55]);
+        assert_eq!(palette_attribute_rgb(8), [0x55, 0x55, 0x55]);
+    }
+
+    #[test]
+    fn palette_applies_basic_register_remaps() {
+        assert_eq!(palette_attribute_rgb(0), [0x00, 0x00, 0xAA]);
+        assert_eq!(palette_attribute_rgb(5), [0xAA, 0xAA, 0xAA]);
+        assert_eq!(palette_attribute_rgb(6), [0xAA, 0x00, 0x00]);
+        assert_eq!(palette_attribute_rgb(7), [0x00, 0xAA, 0xAA]);
+    }
+
+    #[test]
+    fn banana_rotation_frames_cycle_in_basic_order() {
+        assert_eq!(BananaRotation::from_frame(0), BananaRotation::Left);
+        assert_eq!(BananaRotation::from_frame(1), BananaRotation::Up);
+        assert_eq!(BananaRotation::from_frame(2), BananaRotation::Down);
+        assert_eq!(BananaRotation::from_frame(3), BananaRotation::Right);
+        assert_eq!(BananaRotation::from_frame(4), BananaRotation::Left);
+    }
+
+    #[test]
+    fn banana_frames_render_expected_ega_extents() {
+        assert_banana_extent(BananaRotation::Left, 6, 5);
+        assert_banana_extent(BananaRotation::Right, 6, 5);
+        assert_banana_extent(BananaRotation::Up, 5, 5);
+        assert_banana_extent(BananaRotation::Down, 5, 5);
+    }
+
+    #[test]
+    fn up_and_down_banana_frames_are_distinct() {
+        let up = rendered_banana_pixels(BananaRotation::Up);
+        let down = rendered_banana_pixels(BananaRotation::Down);
+
+        assert_ne!(up, down);
+        assert_eq!(up[0][2], Some(OBJECT));
+        assert_eq!(down[4][2], Some(OBJECT));
+    }
+
+    #[test]
+    fn projectile_start_uses_original_player_offsets() {
+        let gorilla = Gorilla { x: 120.0, y: 90.0 };
+
+        assert_eq!(projectile_start(gorilla, Player::One), (120.0, 83.0));
+        assert_eq!(projectile_start(gorilla, Player::Two), (145.0, 83.0));
+    }
+
+    #[test]
+    fn projectile_sample_matches_basic_formula_without_wind() {
+        let gorilla = Gorilla { x: 120.0, y: 90.0 };
+        let sample = projectile_sample(gorilla, 45.0, 50.0, Player::One, 0, 9.8, 1.0);
+        let expected_velocity = 45.0_f32.to_radians().cos() * 50.0;
+
+        assert!((sample.x - (120.0 + expected_velocity)).abs() < 0.001);
+        assert!((sample.y - (83.0 - expected_velocity + 4.9)).abs() < 0.001);
+        assert_eq!(sample.rotation, BananaRotation::Down);
+        assert!(sample.on_screen);
+    }
+
+    #[test]
+    fn projectile_wind_changes_horizontal_acceleration() {
+        let gorilla = Gorilla { x: 120.0, y: 90.0 };
+        let calm = projectile_sample(gorilla, 0.0, 10.0, Player::One, 0, 9.8, 2.0);
+        let windy = projectile_sample(gorilla, 0.0, 10.0, Player::One, 10, 9.8, 2.0);
+
+        assert!((windy.x - calm.x - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn projectile_bounds_match_basic_thresholds() {
+        assert!(!projectile_on_screen(3.0, 100.0));
+        assert!(!projectile_on_screen(LOGICAL_WIDTH as f32 - 10.0, 100.0));
+        assert!(!projectile_on_screen(100.0, LOGICAL_HEIGHT as f32 - 3.0));
+        assert!(projectile_on_screen(4.0, LOGICAL_HEIGHT as f32 - 4.0));
+    }
+
+    #[test]
+    fn velocity_below_two_is_self_hit() {
+        assert_eq!(
+            slow_shot_outcome(1.99, Player::Two),
+            SlowShotOutcome::SelfHit {
+                player: Player::Two,
+            }
+        );
+        assert_eq!(slow_shot_outcome(2.0, Player::Two), SlowShotOutcome::Flying);
+    }
+
+    #[test]
+    fn projectile_advances_in_basic_time_steps() {
+        let mut projectile =
+            Projectile::new(Gorilla { x: 120.0, y: 90.0 }, Player::One, 45.0, 50.0);
+
+        projectile.advance(0.016);
+        assert!((projectile.elapsed - PROJECTILE_TIME_STEP).abs() < f32::EPSILON);
+
+        projectile.advance(0.25);
+        assert!((projectile.elapsed - 0.3).abs() < 0.001);
+    }
+
+    #[test]
+    fn game_update_restarts_demo_projectile_after_leaving_screen() {
+        let mut game = Game::new();
+        game.projectile = Some(Projectile {
+            start: Gorilla { x: 620.0, y: 340.0 },
+            player: Player::One,
+            angle_degrees: 0.0,
+            velocity: 100.0,
+            elapsed: 10.0,
+        });
+
+        game.update(PROJECTILE_TIME_STEP);
+
+        assert_eq!(game.projectile.unwrap().elapsed, 0.0);
+    }
+
+    fn test_buildings() -> Vec<Building> {
+        (0..8)
+            .map(|index| Building {
+                x: 2.0 + index as f32 * 50.0,
+                width: 48.0,
+                height: 80.0 + index as f32,
+                color: building_color(5),
+                windows: Vec::new(),
+            })
+            .collect()
+    }
+
+    fn assert_banana_extent(rotation: BananaRotation, width: usize, height: usize) {
+        let pixels = rendered_banana_pixels(rotation);
+        let lit: Vec<(usize, usize)> = pixels
+            .iter()
+            .enumerate()
+            .flat_map(|(y, row)| {
+                row.iter()
+                    .enumerate()
+                    .filter_map(move |(x, pixel)| pixel.map(|_| (x, y)))
+            })
+            .collect();
+
+        let min_x = lit.iter().map(|(x, _)| *x).min().unwrap();
+        let max_x = lit.iter().map(|(x, _)| *x).max().unwrap();
+        let min_y = lit.iter().map(|(_, y)| *y).min().unwrap();
+        let max_y = lit.iter().map(|(_, y)| *y).max().unwrap();
+
+        assert_eq!(max_x - min_x + 1, width);
+        assert_eq!(max_y - min_y + 1, height);
+    }
+
+    fn rendered_banana_pixels(rotation: BananaRotation) -> Vec<Vec<Option<[f32; 4]>>> {
+        let mut canvas = Canvas::new(10, 10);
+        draw_banana(&mut canvas, 2.0, 2.0, rotation);
+
+        (2..8)
+            .map(|y| {
+                (2..8)
+                    .map(|x| canvas.pixels[y * canvas.width as usize + x])
+                    .collect()
+            })
+            .collect()
+    }
+}
