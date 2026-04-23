@@ -11,6 +11,7 @@ const EXPLOSION: [f32; 4] = palette_attribute(2);
 const LIT_WINDOW: [f32; 4] = palette_attribute(14);
 const DARK_WINDOW: [f32; 4] = palette_attribute(8);
 const SUN: [f32; 4] = palette_attribute(3);
+const HUD_TEXT: [f32; 4] = palette_attribute(15);
 const BOTTOM_LINE: f32 = 335.0;
 const GORILLA_HEIGHT: f32 = 25.0;
 const GORILLA_X_ADJUST: f32 = 14.0;
@@ -26,8 +27,6 @@ const BASIC_CIRCLE_Y_ASPECT: f32 = 1.0;
 const PROJECTILE_TIME_STEP: f32 = 0.1;
 #[cfg(test)]
 const MIN_THROW_VELOCITY: f32 = 2.0;
-const DEMO_SHOT_ANGLE: f32 = 55.0;
-const DEMO_SHOT_VELOCITY: f32 = 75.0;
 const DEFAULT_GRAVITY: f32 = 9.8;
 const SUN_HEIGHT_LIMIT: f32 = 39.0;
 const SUN_CLEAR_RADIUS: f32 = 20.0;
@@ -35,6 +34,8 @@ const EXPLOSION_DURATION: f32 = 0.3;
 const EXPLOSION_MAX_RADIUS: f32 = 14.0;
 const GORILLA_EXPLOSION_DURATION: f32 = 0.6;
 const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
+const TEXT_CELL_WIDTH: i32 = 8;
+const TEXT_CELL_HEIGHT: i32 = 14;
 
 const fn palette_attribute(attribute: u8) -> [f32; 4] {
     let [red, green, blue] = palette_attribute_rgb(attribute);
@@ -123,27 +124,26 @@ pub struct Game {
     sun_shocked: bool,
     current_player: Player,
     scores: [u32; 2],
+    player_names: [String; 2],
+    turn_phase: TurnPhase,
 }
 
 impl Game {
     pub fn new() -> Self {
         let (round, gorillas) = make_round(rand::random());
 
-        let projectile = Some(Projectile::new(
-            gorillas[0],
-            Player::One,
-            DEMO_SHOT_ANGLE,
-            DEMO_SHOT_VELOCITY,
-        ));
-
         Self {
             round,
             gorillas,
-            projectile,
+            projectile: None,
             explosion: None,
             sun_shocked: false,
             current_player: Player::One,
             scores: [0, 0],
+            player_names: [String::from("Player 1"), String::from("Player 2")],
+            turn_phase: TurnPhase::EnterAngle {
+                input: String::new(),
+            },
         }
     }
 
@@ -217,12 +217,105 @@ impl Game {
         if let Some(explosion) = self.explosion {
             draw_explosion(&mut canvas, explosion, &self.gorillas);
         }
+        self.draw_hud(&mut canvas);
 
         Frame {
             logical_width: LOGICAL_WIDTH,
             logical_height: LOGICAL_HEIGHT,
             clear_color: BACKGROUND,
             vertices: canvas.into_vertices(),
+        }
+    }
+
+    pub fn handle_char(&mut self, ch: char) {
+        if self.projectile.is_some() || self.explosion.is_some() {
+            return;
+        }
+
+        if !matches!(ch, '0'..='9' | '.') {
+            return;
+        }
+
+        let input = self.active_input_mut();
+        if ch == '.' && input.contains('.') {
+            return;
+        }
+        input.push(ch);
+    }
+
+    pub fn handle_backspace(&mut self) {
+        if self.projectile.is_some() || self.explosion.is_some() {
+            return;
+        }
+
+        self.active_input_mut().pop();
+    }
+
+    pub fn handle_submit(&mut self) {
+        if self.projectile.is_some() || self.explosion.is_some() {
+            return;
+        }
+
+        match &mut self.turn_phase {
+            TurnPhase::EnterAngle { input } => {
+                let angle = parse_angle_input(input);
+                self.turn_phase = TurnPhase::EnterVelocity {
+                    angle_deg: angle,
+                    input: String::new(),
+                };
+            }
+            TurnPhase::EnterVelocity { angle_deg, input } => {
+                let velocity = parse_numeric_input(input);
+                let mut angle = *angle_deg;
+                if self.current_player == Player::Two {
+                    angle = 180.0 - angle;
+                }
+
+                let player = self.current_player;
+                self.projectile = Some(Projectile::new(
+                    self.gorillas[player.index()],
+                    player,
+                    angle,
+                    velocity,
+                ));
+                self.turn_phase = TurnPhase::ProjectileFlying;
+            }
+            TurnPhase::ProjectileFlying => {}
+        }
+    }
+
+    fn draw_hud(&self, canvas: &mut Canvas) {
+        draw_text(canvas, 1, 1, &self.player_names[0], HUD_TEXT);
+
+        let right_col = 80i32 - self.player_names[1].len() as i32;
+        draw_text(
+            canvas,
+            1,
+            right_col.max(1) as usize,
+            &self.player_names[1],
+            HUD_TEXT,
+        );
+
+        let score_text = format!("{}>Score<{}", self.scores[0], self.scores[1]);
+        let score_col = centered_col(&score_text);
+        draw_text(canvas, 23, score_col, &score_text, HUD_TEXT);
+
+        let locate_col = match self.current_player {
+            Player::One => 1,
+            Player::Two => 66,
+        };
+
+        match &self.turn_phase {
+            TurnPhase::EnterAngle { input } => {
+                draw_text(canvas, 2, locate_col, "Angle:", HUD_TEXT);
+                draw_text(canvas, 2, locate_col + 7, input, HUD_TEXT);
+            }
+            TurnPhase::EnterVelocity { input, .. } => {
+                draw_text(canvas, 2, locate_col, "Angle:", HUD_TEXT);
+                draw_text(canvas, 3, locate_col, "Velocity:", HUD_TEXT);
+                draw_text(canvas, 3, locate_col + 10, input, HUD_TEXT);
+            }
+            TurnPhase::ProjectileFlying => {}
         }
     }
 
@@ -272,7 +365,9 @@ impl Game {
                 let (round, gorillas) = make_round(rand::random());
                 self.round = round;
                 self.gorillas = gorillas;
-                self.spawn_demo_projectile();
+                self.turn_phase = TurnPhase::EnterAngle {
+                    input: String::new(),
+                };
             }
         }
     }
@@ -280,16 +375,18 @@ impl Game {
     fn advance_turn(&mut self) {
         self.current_player = self.current_player.other();
         self.sun_shocked = false;
-        self.spawn_demo_projectile();
+        self.projectile = None;
+        self.turn_phase = TurnPhase::EnterAngle {
+            input: String::new(),
+        };
     }
 
-    fn spawn_demo_projectile(&mut self) {
-        self.projectile = Some(Projectile::new(
-            self.gorillas[self.current_player.index()],
-            self.current_player,
-            DEMO_SHOT_ANGLE,
-            DEMO_SHOT_VELOCITY,
-        ));
+    fn active_input_mut(&mut self) -> &mut String {
+        match &mut self.turn_phase {
+            TurnPhase::EnterAngle { input } => input,
+            TurnPhase::EnterVelocity { input, .. } => input,
+            TurnPhase::ProjectileFlying => unreachable!("no active input while projectile flies"),
+        }
     }
 }
 
@@ -348,6 +445,13 @@ impl Player {
             Self::Two => Self::One,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum TurnPhase {
+    EnterAngle { input: String },
+    EnterVelocity { angle_deg: f32, input: String },
+    ProjectileFlying,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -953,6 +1057,137 @@ fn projectile_left_sun(sample: ProjectileSample) -> bool {
     (LOGICAL_WIDTH as f32 * 0.5 - sample.x).abs() > SUN_CLEAR_RADIUS || sample.y > SUN_HEIGHT_LIMIT
 }
 
+fn parse_numeric_input(input: &str) -> f32 {
+    input.parse::<f32>().unwrap_or(0.0)
+}
+
+fn parse_angle_input(input: &str) -> f32 {
+    let angle = parse_numeric_input(input);
+    if angle > 360.0 { 0.0 } else { angle }
+}
+
+fn centered_col(text: &str) -> usize {
+    let len = text.chars().count() as i32;
+    (40 - (len / 2)).max(1) as usize
+}
+
+fn draw_text(canvas: &mut Canvas, row: usize, col: usize, text: &str, color: [f32; 4]) {
+    let base_x = ((col as i32 - 1) * TEXT_CELL_WIDTH).max(0);
+    let base_y = ((row as i32 - 1) * TEXT_CELL_HEIGHT).max(0);
+
+    for (index, ch) in text.chars().enumerate() {
+        draw_char(
+            canvas,
+            base_x + index as i32 * TEXT_CELL_WIDTH,
+            base_y,
+            ch,
+            color,
+        );
+    }
+}
+
+fn draw_char(canvas: &mut Canvas, x: i32, y: i32, ch: char, color: [f32; 4]) {
+    let Some(rows) = glyph_rows(ch) else {
+        return;
+    };
+
+    for (row_index, bits) in rows.iter().enumerate() {
+        for col_index in 0..5 {
+            if (bits >> (4 - col_index)) & 1 == 1 {
+                let px = x + col_index;
+                let py = y + row_index as i32 * 2;
+                canvas.pixel(px as f32, py as f32, color);
+                canvas.pixel(px as f32, (py + 1) as f32, color);
+            }
+        }
+    }
+}
+
+fn glyph_rows(ch: char) -> Option<[u8; 7]> {
+    match ch.to_ascii_uppercase() {
+        ' ' => Some([0, 0, 0, 0, 0, 0, 0]),
+        '0' => Some([
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ]),
+        '1' => Some([
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ]),
+        '2' => Some([
+            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
+        ]),
+        '3' => Some([
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ]),
+        '4' => Some([
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ]),
+        '5' => Some([
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ]),
+        '6' => Some([
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ]),
+        '7' => Some([
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ]),
+        '8' => Some([
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ]),
+        '9' => Some([
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b11100,
+        ]),
+        'A' => Some([
+            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ]),
+        'C' => Some([
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ]),
+        'E' => Some([
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
+        ]),
+        'G' => Some([
+            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ]),
+        'I' => Some([
+            0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ]),
+        'L' => Some([
+            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
+        ]),
+        'O' => Some([
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ]),
+        'P' => Some([
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
+        ]),
+        'R' => Some([
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
+        ]),
+        'S' => Some([
+            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ]),
+        'T' => Some([
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ]),
+        'V' => Some([
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ]),
+        'Y' => Some([
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ]),
+        ':' => Some([0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0]),
+        '.' => Some([0, 0, 0, 0, 0, 0b00100, 0b00100]),
+        '-' => Some([0, 0, 0, 0b11111, 0, 0, 0]),
+        '<' => Some([
+            0b00010, 0b00100, 0b01000, 0b10000, 0b01000, 0b00100, 0b00010,
+        ]),
+        '>' => Some([
+            0b01000, 0b00100, 0b00010, 0b00001, 0b00010, 0b00100, 0b01000,
+        ]),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 fn slow_shot_outcome(velocity: f32, player: Player) -> SlowShotOutcome {
     if velocity < MIN_THROW_VELOCITY {
@@ -1349,6 +1584,7 @@ mod tests {
     #[test]
     fn game_update_restarts_demo_projectile_after_leaving_screen() {
         let mut game = Game::new();
+        game.turn_phase = TurnPhase::ProjectileFlying;
         game.projectile = Some(Projectile {
             start: Gorilla { x: 620.0, y: 340.0 },
             player: Player::One,
@@ -1360,7 +1596,14 @@ mod tests {
 
         game.update(PROJECTILE_TIME_STEP);
 
-        assert_eq!(game.projectile.unwrap().elapsed, 0.0);
+        assert!(game.projectile.is_none());
+        assert_eq!(game.current_player, Player::Two);
+        assert_eq!(
+            game.turn_phase,
+            TurnPhase::EnterAngle {
+                input: String::new()
+            }
+        );
     }
 
     #[test]
@@ -1481,9 +1724,10 @@ mod tests {
 
         game.update(PROJECTILE_TIME_STEP);
 
-        assert!(game.projectile.is_some());
+        assert!(game.projectile.is_none());
         assert!(game.explosion.is_none());
         assert!(!game.sun_shocked);
+        assert_eq!(game.current_player, Player::Two);
     }
 
     #[test]
@@ -1491,6 +1735,7 @@ mod tests {
         let mut game = Game::new();
         game.round.buildings.clear();
         game.gorillas = [Gorilla { x: 120.0, y: 90.0 }, Gorilla { x: 500.0, y: 90.0 }];
+        game.turn_phase = TurnPhase::ProjectileFlying;
         game.projectile = Some(Projectile {
             start: Gorilla { x: 495.0, y: 117.0 },
             player: Player::One,
@@ -1504,6 +1749,88 @@ mod tests {
 
         assert_eq!(game.explosion, Some(Explosion::gorilla(1, 0)));
         assert!(game.explosion_hits_gorilla(1));
+    }
+
+    #[test]
+    fn angle_input_above_360_resets_to_zero() {
+        assert_eq!(parse_angle_input("361"), 0.0);
+        assert_eq!(parse_angle_input("360"), 360.0);
+    }
+
+    #[test]
+    fn submit_transitions_from_angle_to_velocity_to_projectile() {
+        let mut game = Game::new();
+
+        game.handle_char('4');
+        game.handle_char('5');
+        game.handle_submit();
+        assert_eq!(
+            game.turn_phase,
+            TurnPhase::EnterVelocity {
+                angle_deg: 45.0,
+                input: String::new(),
+            }
+        );
+
+        game.handle_char('5');
+        game.handle_char('0');
+        game.handle_submit();
+        assert!(matches!(game.turn_phase, TurnPhase::ProjectileFlying));
+        assert_eq!(game.projectile.unwrap().angle_degrees, 45.0);
+        assert_eq!(game.projectile.unwrap().velocity, 50.0);
+    }
+
+    #[test]
+    fn player_two_angle_is_inverted_on_launch() {
+        let mut game = Game::new();
+        game.current_player = Player::Two;
+        game.turn_phase = TurnPhase::EnterAngle {
+            input: String::new(),
+        };
+
+        game.handle_char('6');
+        game.handle_char('0');
+        game.handle_submit();
+        game.handle_char('4');
+        game.handle_char('0');
+        game.handle_submit();
+
+        assert_eq!(game.projectile.unwrap().angle_degrees, 120.0);
+    }
+
+    #[test]
+    fn hud_draws_score_line_near_row_23_center() {
+        let mut game = Game::new();
+        game.scores = [2, 1];
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+        game.draw_hud(&mut canvas);
+
+        let x = ((centered_col("2>Score<1") as i32 - 1) * TEXT_CELL_WIDTH + 2) as usize;
+        let y = ((23 - 1) * TEXT_CELL_HEIGHT as usize) + 1;
+        assert_eq!(canvas.pixels[y * canvas.width as usize + x], Some(HUD_TEXT));
+    }
+
+    #[test]
+    fn hud_moves_angle_prompt_to_right_for_player_two() {
+        let mut game = Game::new();
+        game.current_player = Player::Two;
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+        game.draw_hud(&mut canvas);
+
+        let left_prompt_x = ((1 - 1) * TEXT_CELL_WIDTH as usize) + 1;
+        let right_prompt_x = ((66 - 1) * TEXT_CELL_WIDTH as usize) + 1;
+        let y = ((2 - 1) * TEXT_CELL_HEIGHT as usize) + 1;
+
+        assert_ne!(
+            canvas.pixels[y * canvas.width as usize + right_prompt_x],
+            None
+        );
+        assert_eq!(
+            canvas.pixels[y * canvas.width as usize + left_prompt_x],
+            None
+        );
     }
 
     fn test_buildings() -> Vec<Building> {

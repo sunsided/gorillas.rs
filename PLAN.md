@@ -147,9 +147,9 @@ This plan aligns `GOAL.md` with the current Rust implementation. The target is m
   - [ ] Add building and gorilla explosion animations.
     - Temporary: demo building impacts show a simple expanding explosion circle, and gorilla hits use a separate temporary gorilla-centered blast.
 - [ ] Render HUD exactly enough for gameplay:
-  - [ ] Player names at top left/top right.
-  - [ ] Angle and velocity prompts at original columns.
-  - [ ] Centered score line near row 23.
+  - [x] Player names at top left/top right.
+  - [x] Angle and velocity prompts at original columns.
+  - [x] Centered score line near row 23.
   - [ ] Game-over score table.
 
 ## Gameplay Work
@@ -167,9 +167,10 @@ This plan aligns `GOAL.md` with the current Rust implementation. The target is m
   - [x] Apply original EGA offsets.
   - [x] Add tests for placement from generated building coordinates.
 - [ ] Input:
-  - [ ] Implement numeric entry with digits, one decimal point, backspace, enter, and invalid-key feedback state.
-  - [ ] Preserve original angle validation behavior: values above `360` reset.
-  - [ ] Invert player 2 angle with `180 - angle`.
+  - [x] Implement numeric entry with digits, one decimal point, backspace, enter, and invalid-key feedback state.
+    - Current state ignores invalid keys rather than showing a visible feedback effect.
+  - [x] Preserve original angle validation behavior: values above `360` reset.
+  - [x] Invert player 2 angle with `180 - angle`.
 - [ ] Projectile physics:
   - [x] Spawn from original adjusted start position.
   - [x] Preserve player-specific launch offset: player 2 starts at `StartX + Scl(25)`; both start at `StartY - Scl(4) - 3`.
@@ -181,7 +182,7 @@ This plan aligns `GOAL.md` with the current Rust implementation. The target is m
   - [x] Add unit tests for representative trajectories.
   - [x] Render projectile samples as a temporary demo shot.
   - [x] Wire projectile samples into temporary turn state and rendering.
-    - Current state alternates demo tossers automatically; typed input is still pending.
+    - Current state uses typed angle/velocity entry and a simple in-frame bitmap HUD.
 - [ ] Collision:
   - [x] Detect out-of-bounds using original thresholds.
   - [x] Emulate original banana collision probe: player-dependent leading edge, `LookX`/`LookY` diagonal samples, and sampled color priority.
