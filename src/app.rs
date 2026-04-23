@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc, time::Instant};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::WindowEvent,
+    event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{Key, NamedKey},
     window::{Window, WindowId},
@@ -101,11 +101,18 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::KeyboardInput { event, .. }
-                if event.logical_key == Key::Named(NamedKey::Escape)
-                    && event.state.is_pressed() =>
-            {
-                event_loop.exit();
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                match event.logical_key {
+                    Key::Named(NamedKey::Escape) => event_loop.exit(),
+                    Key::Named(NamedKey::Backspace) => self.game.handle_backspace(),
+                    Key::Named(NamedKey::Enter) => self.game.handle_submit(),
+                    Key::Character(ref text) => {
+                        for ch in text.chars() {
+                            self.game.handle_char(ch);
+                        }
+                    }
+                    _ => {}
+                }
             }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
