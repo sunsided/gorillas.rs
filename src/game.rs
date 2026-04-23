@@ -29,6 +29,12 @@ const MIN_THROW_VELOCITY: f32 = 2.0;
 const DEMO_SHOT_ANGLE: f32 = 55.0;
 const DEMO_SHOT_VELOCITY: f32 = 75.0;
 const DEFAULT_GRAVITY: f32 = 9.8;
+const SUN_HEIGHT_LIMIT: f32 = 39.0;
+const SUN_CLEAR_RADIUS: f32 = 20.0;
+const EXPLOSION_DURATION: f32 = 0.3;
+const EXPLOSION_MAX_RADIUS: f32 = 14.0;
+const GORILLA_EXPLOSION_DURATION: f32 = 0.6;
+const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
 
 const fn palette_attribute(attribute: u8) -> [f32; 4] {
     let [red, green, blue] = palette_attribute_rgb(attribute);
@@ -113,6 +119,10 @@ pub struct Game {
     round: Round,
     gorillas: [Gorilla; 2],
     projectile: Option<Projectile>,
+    explosion: Option<Explosion>,
+    sun_shocked: bool,
+    current_player: Player,
+    scores: [u32; 2],
 }
 
 impl Game {
@@ -130,37 +140,82 @@ impl Game {
             round,
             gorillas,
             projectile,
+            explosion: None,
+            sun_shocked: false,
+            current_player: Player::One,
+            scores: [0, 0],
         }
     }
 
     pub fn update(&mut self, dt: f32) {
-        if let Some(projectile) = self.projectile.as_mut() {
-            projectile.advance(dt);
+        if let Some(explosion) = self.explosion.as_mut() {
+            explosion.advance(dt);
+            if explosion.finished() {
+                let explosion = self.explosion.take().unwrap();
+                self.finish_explosion(explosion);
+            }
+            return;
+        }
 
-            let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
-            if !sample.on_screen {
-                *projectile = Projectile::new(
-                    self.gorillas[0],
-                    Player::One,
-                    DEMO_SHOT_ANGLE,
-                    DEMO_SHOT_VELOCITY,
-                );
+        if self.projectile.is_none() {
+            return;
+        }
+
+        {
+            let projectile = self.projectile.as_mut().unwrap();
+            projectile.advance(dt);
+        }
+
+        let projectile = self.projectile.unwrap();
+        let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
+        if !sample.on_screen {
+            self.advance_turn();
+            return;
+        }
+
+        let collision_canvas = self.collision_canvas();
+        match probe_projectile_collision(
+            &collision_canvas,
+            sample,
+            projectile.player,
+            projectile.shot_in_sun,
+            &self.gorillas,
+        ) {
+            CollisionProbe::Clear { shot_in_sun } => {
+                if let Some(projectile) = self.projectile.as_mut() {
+                    projectile.shot_in_sun = shot_in_sun;
+                }
+            }
+            CollisionProbe::Sun { shot_in_sun } => {
+                if let Some(projectile) = self.projectile.as_mut() {
+                    projectile.shot_in_sun = shot_in_sun;
+                }
+                self.sun_shocked = true;
+            }
+            CollisionProbe::Impact { kind, x, y } => {
+                self.projectile = None;
+                self.explosion = Some(match kind {
+                    ImpactKind::Building => Explosion::building(x, y),
+                    ImpactKind::Gorilla(player_index) => {
+                        Explosion::gorilla(player_index, projectile.player.index())
+                    }
+                });
+                self.sun_shocked = false;
             }
         }
     }
 
     pub fn frame(&self) -> Frame {
         let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
-        draw_sun(&mut canvas, false);
-        draw_city(&mut canvas, &self.round.buildings);
-        draw_wind(&mut canvas, self.round.wind);
-        draw_gorilla(&mut canvas, self.gorillas[0], GorillaArms::Down);
-        draw_gorilla(&mut canvas, self.gorillas[1], GorillaArms::Down);
+        self.draw_scene(&mut canvas, true);
         if let Some(projectile) = self.projectile {
             let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
             if sample.on_screen {
                 draw_banana(&mut canvas, sample.x, sample.y, sample.rotation);
             }
+        }
+        if let Some(explosion) = self.explosion {
+            draw_explosion(&mut canvas, explosion, &self.gorillas);
         }
 
         Frame {
@@ -169,6 +224,72 @@ impl Game {
             clear_color: BACKGROUND,
             vertices: canvas.into_vertices(),
         }
+    }
+
+    fn draw_scene(&self, canvas: &mut Canvas, include_wind: bool) {
+        draw_sun(canvas, self.sun_shocked);
+        draw_city(canvas, &self.round.buildings);
+        if include_wind {
+            draw_wind(canvas, self.round.wind);
+        }
+        for (index, gorilla) in self.gorillas.iter().copied().enumerate() {
+            if self.explosion_hits_gorilla(index) {
+                continue;
+            }
+            draw_gorilla(canvas, gorilla, GorillaArms::Down);
+        }
+    }
+
+    fn collision_canvas(&self) -> Canvas {
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        self.draw_scene(&mut canvas, false);
+        canvas
+    }
+
+    fn explosion_hits_gorilla(&self, gorilla_index: usize) -> bool {
+        matches!(
+            self.explosion,
+            Some(Explosion {
+                kind: ExplosionKind::Gorilla {
+                    gorilla_index: hit_index,
+                    winner_index: _,
+                },
+                ..
+            }) if hit_index == gorilla_index
+        )
+    }
+
+    fn finish_explosion(&mut self, explosion: Explosion) {
+        self.sun_shocked = false;
+        match explosion.kind {
+            ExplosionKind::Building { .. } => self.advance_turn(),
+            ExplosionKind::Gorilla {
+                gorilla_index: _,
+                winner_index,
+            } => {
+                self.scores[winner_index] += 1;
+                self.current_player = self.current_player.other();
+                let (round, gorillas) = make_round(rand::random());
+                self.round = round;
+                self.gorillas = gorillas;
+                self.spawn_demo_projectile();
+            }
+        }
+    }
+
+    fn advance_turn(&mut self) {
+        self.current_player = self.current_player.other();
+        self.sun_shocked = false;
+        self.spawn_demo_projectile();
+    }
+
+    fn spawn_demo_projectile(&mut self) {
+        self.projectile = Some(Projectile::new(
+            self.gorillas[self.current_player.index()],
+            self.current_player,
+            DEMO_SHOT_ANGLE,
+            DEMO_SHOT_VELOCITY,
+        ));
     }
 }
 
@@ -211,6 +332,22 @@ struct Gorilla {
 enum Player {
     One,
     Two,
+}
+
+impl Player {
+    fn index(self) -> usize {
+        match self {
+            Self::One => 0,
+            Self::Two => 1,
+        }
+    }
+
+    fn other(self) -> Self {
+        match self {
+            Self::One => Self::Two,
+            Self::Two => Self::One,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -263,6 +400,7 @@ struct Projectile {
     angle_degrees: f32,
     velocity: f32,
     elapsed: f32,
+    shot_in_sun: bool,
 }
 
 impl Projectile {
@@ -273,6 +411,7 @@ impl Projectile {
             angle_degrees,
             velocity,
             elapsed: 0.0,
+            shot_in_sun: false,
         }
     }
 
@@ -292,6 +431,92 @@ impl Projectile {
             self.elapsed,
         )
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Explosion {
+    kind: ExplosionKind,
+    elapsed: f32,
+}
+
+impl Explosion {
+    fn building(x: f32, y: f32) -> Self {
+        Self {
+            kind: ExplosionKind::Building { x, y },
+            elapsed: 0.0,
+        }
+    }
+
+    fn gorilla(gorilla_index: usize, winner_index: usize) -> Self {
+        Self {
+            kind: ExplosionKind::Gorilla {
+                gorilla_index,
+                winner_index,
+            },
+            elapsed: 0.0,
+        }
+    }
+
+    fn advance(&mut self, dt: f32) {
+        self.elapsed += dt;
+    }
+
+    fn finished(self) -> bool {
+        self.elapsed >= self.duration()
+    }
+
+    fn radius(self) -> f32 {
+        let max_radius = match self.kind {
+            ExplosionKind::Building { .. } => EXPLOSION_MAX_RADIUS,
+            ExplosionKind::Gorilla { .. } => GORILLA_EXPLOSION_MAX_RADIUS,
+        };
+        (self.elapsed / self.duration()).clamp(0.2, 1.0) * max_radius
+    }
+
+    fn duration(self) -> f32 {
+        match self.kind {
+            ExplosionKind::Building { .. } => EXPLOSION_DURATION,
+            ExplosionKind::Gorilla { .. } => GORILLA_EXPLOSION_DURATION,
+        }
+    }
+
+    fn center(self, gorillas: &[Gorilla; 2]) -> (f32, f32) {
+        match self.kind {
+            ExplosionKind::Building { x, y } => (x, y),
+            ExplosionKind::Gorilla {
+                gorilla_index,
+                winner_index: _,
+            } => {
+                let gorilla = gorillas[gorilla_index];
+                (gorilla.x + 8.5, gorilla.y + 12.0)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ExplosionKind {
+    Building {
+        x: f32,
+        y: f32,
+    },
+    Gorilla {
+        gorilla_index: usize,
+        winner_index: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImpactKind {
+    Building,
+    Gorilla(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CollisionProbe {
+    Clear { shot_in_sun: bool },
+    Sun { shot_in_sun: bool },
+    Impact { kind: ImpactKind, x: f32, y: f32 },
 }
 
 struct Canvas {
@@ -344,6 +569,16 @@ impl Canvas {
 
         let index = y as usize * self.width as usize + x as usize;
         self.pixels[index] = Some(color);
+    }
+
+    fn point(&self, x: f32, y: f32) -> Option<[f32; 4]> {
+        let x = x.round() as i32;
+        let y = y.round() as i32;
+        if !(0..self.width as i32).contains(&x) || !(0..self.height as i32).contains(&y) {
+            return None;
+        }
+
+        self.pixels[y as usize * self.width as usize + x as usize]
     }
 
     fn rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) {
@@ -641,6 +876,83 @@ fn projectile_on_screen(x: f32, y: f32) -> bool {
     x < LOGICAL_WIDTH as f32 - 10.0 && x > 3.0 && y < LOGICAL_HEIGHT as f32 - 3.0
 }
 
+fn probe_projectile_collision(
+    canvas: &Canvas,
+    sample: ProjectileSample,
+    player: Player,
+    shot_in_sun: bool,
+    gorillas: &[Gorilla; 2],
+) -> CollisionProbe {
+    if !sample.on_screen || sample.y <= 0.0 {
+        return CollisionProbe::Clear { shot_in_sun };
+    }
+
+    let mut shot_in_sun = shot_in_sun;
+    let mut hit_sun = false;
+    for (dx, dy) in probe_offsets(player) {
+        let point = canvas.point(sample.x + dx, sample.y + dy);
+        if point.is_none() || point == Some(BACKGROUND) {
+            if shot_in_sun && projectile_left_sun(sample) {
+                shot_in_sun = false;
+            }
+            continue;
+        }
+
+        if point == Some(SUN) && sample.y < SUN_HEIGHT_LIMIT {
+            shot_in_sun = true;
+            hit_sun = true;
+            continue;
+        }
+
+        let kind = if point == Some(OBJECT) {
+            ImpactKind::Gorilla(resolve_hit_gorilla(sample, gorillas))
+        } else {
+            ImpactKind::Building
+        };
+        return CollisionProbe::Impact {
+            kind,
+            x: sample.x + 4.0,
+            y: sample.y + 4.0,
+        };
+    }
+
+    if hit_sun {
+        CollisionProbe::Sun { shot_in_sun }
+    } else {
+        CollisionProbe::Clear { shot_in_sun }
+    }
+}
+
+fn resolve_hit_gorilla(sample: ProjectileSample, gorillas: &[Gorilla; 2]) -> usize {
+    gorillas
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| {
+            gorilla_hit_distance(sample, **left)
+                .partial_cmp(&gorilla_hit_distance(sample, **right))
+                .unwrap()
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn gorilla_hit_distance(sample: ProjectileSample, gorilla: Gorilla) -> f32 {
+    let center_x = gorilla.x + 8.5;
+    let center_y = gorilla.y + 12.0;
+    (sample.x - center_x).hypot(sample.y - center_y)
+}
+
+fn probe_offsets(player: Player) -> [(f32, f32); 2] {
+    match player {
+        Player::One => [(8.0, 0.0), (4.0, 6.0)],
+        Player::Two => [(0.0, 0.0), (4.0, 6.0)],
+    }
+}
+
+fn projectile_left_sun(sample: ProjectileSample) -> bool {
+    (LOGICAL_WIDTH as f32 * 0.5 - sample.x).abs() > SUN_CLEAR_RADIUS || sample.y > SUN_HEIGHT_LIMIT
+}
+
 #[cfg(test)]
 fn slow_shot_outcome(velocity: f32, player: Player) -> SlowShotOutcome {
     if velocity < MIN_THROW_VELOCITY {
@@ -711,6 +1023,22 @@ fn draw_banana(canvas: &mut Canvas, x: f32, y: f32, rotation: BananaRotation) {
                 canvas.pixel(x + column as f32, y + row as f32, OBJECT);
             }
         }
+    }
+}
+
+fn draw_explosion(canvas: &mut Canvas, explosion: Explosion, gorillas: &[Gorilla; 2]) {
+    let (x, y) = explosion.center(gorillas);
+    canvas.circle(x, y, explosion.radius(), 24, EXPLOSION);
+    if matches!(explosion.kind, ExplosionKind::Gorilla { .. }) {
+        let sweep_y = y + 6.0 - explosion.radius() * 0.5;
+        canvas.line(
+            x - 10.0,
+            sweep_y,
+            x + 10.0,
+            sweep_y,
+            EXPLOSION_MAX_RADIUS / 7.0,
+            EXPLOSION,
+        );
     }
 }
 
@@ -1027,11 +1355,155 @@ mod tests {
             angle_degrees: 0.0,
             velocity: 100.0,
             elapsed: 10.0,
+            shot_in_sun: false,
         });
 
         game.update(PROJECTILE_TIME_STEP);
 
         assert_eq!(game.projectile.unwrap().elapsed, 0.0);
+    }
+
+    #[test]
+    fn probe_detects_building_impact_from_visible_pixels() {
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        canvas.pixel(108.0, 120.0, EXPLOSION);
+        let sample = ProjectileSample {
+            x: 100.0,
+            y: 120.0,
+            rotation: BananaRotation::Left,
+            on_screen: true,
+        };
+
+        assert_eq!(
+            probe_projectile_collision(&canvas, sample, Player::One, false, &test_gorillas()),
+            CollisionProbe::Impact {
+                kind: ImpactKind::Building,
+                x: 104.0,
+                y: 124.0,
+            }
+        );
+    }
+
+    #[test]
+    fn probe_marks_sun_hits_without_impact() {
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        canvas.pixel(320.0, 25.0, SUN);
+        let sample = ProjectileSample {
+            x: 312.0,
+            y: 25.0,
+            rotation: BananaRotation::Left,
+            on_screen: true,
+        };
+
+        assert_eq!(
+            probe_projectile_collision(&canvas, sample, Player::One, false, &test_gorillas()),
+            CollisionProbe::Sun { shot_in_sun: true }
+        );
+    }
+
+    #[test]
+    fn probe_resolves_gorilla_hits_to_nearest_target() {
+        let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        let gorillas = [
+            Gorilla { x: 100.0, y: 100.0 },
+            Gorilla { x: 500.0, y: 100.0 },
+        ];
+        canvas.pixel(112.0, 110.0, OBJECT);
+        let sample = ProjectileSample {
+            x: 112.0,
+            y: 110.0,
+            rotation: BananaRotation::Left,
+            on_screen: true,
+        };
+
+        assert_eq!(
+            probe_projectile_collision(&canvas, sample, Player::Two, false, &gorillas),
+            CollisionProbe::Impact {
+                kind: ImpactKind::Gorilla(0),
+                x: 116.0,
+                y: 114.0,
+            }
+        );
+    }
+
+    #[test]
+    fn probe_clears_shot_in_sun_after_leaving_sun_region() {
+        let canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        let sample = ProjectileSample {
+            x: 100.0,
+            y: 50.0,
+            rotation: BananaRotation::Left,
+            on_screen: true,
+        };
+
+        assert_eq!(
+            probe_projectile_collision(&canvas, sample, Player::One, true, &test_gorillas()),
+            CollisionProbe::Clear { shot_in_sun: false }
+        );
+    }
+
+    #[test]
+    fn game_update_enters_explosion_state_after_impact() {
+        let mut game = Game::new();
+        game.round.buildings = vec![Building {
+            x: 0.0,
+            width: LOGICAL_WIDTH as f32,
+            height: 260.0,
+            color: EXPLOSION,
+            windows: Vec::new(),
+        }];
+        game.gorillas = [Gorilla { x: 120.0, y: 90.0 }, Gorilla { x: 500.0, y: 90.0 }];
+        game.projectile = Some(Projectile {
+            start: Gorilla { x: 120.0, y: 90.0 },
+            player: Player::One,
+            angle_degrees: 0.0,
+            velocity: 0.0,
+            elapsed: 0.0,
+            shot_in_sun: false,
+        });
+
+        game.update(PROJECTILE_TIME_STEP);
+
+        assert!(game.projectile.is_none());
+        let explosion = game.explosion.unwrap();
+        assert!(matches!(explosion.kind, ExplosionKind::Building { .. }));
+    }
+
+    #[test]
+    fn explosion_completion_restarts_demo_projectile() {
+        let mut game = Game::new();
+        game.projectile = None;
+        game.sun_shocked = true;
+        game.explosion = Some(Explosion {
+            kind: ExplosionKind::Building { x: 10.0, y: 10.0 },
+            elapsed: EXPLOSION_DURATION,
+        });
+
+        game.update(PROJECTILE_TIME_STEP);
+
+        assert!(game.projectile.is_some());
+        assert!(game.explosion.is_none());
+        assert!(!game.sun_shocked);
+    }
+
+    #[test]
+    fn game_update_uses_gorilla_explosion_for_object_hits() {
+        let mut game = Game::new();
+        game.round.buildings.clear();
+        game.gorillas = [Gorilla { x: 120.0, y: 90.0 }, Gorilla { x: 500.0, y: 90.0 }];
+        game.projectile = Some(Projectile {
+            start: Gorilla { x: 495.0, y: 117.0 },
+            player: Player::One,
+            angle_degrees: 0.0,
+            velocity: 0.0,
+            elapsed: 0.0,
+            shot_in_sun: false,
+        });
+
+        game.update(PROJECTILE_TIME_STEP);
+
+        assert_eq!(game.explosion, Some(Explosion::gorilla(1, 0)));
+        assert!(game.explosion_hits_gorilla(1));
     }
 
     fn test_buildings() -> Vec<Building> {
@@ -1044,6 +1516,13 @@ mod tests {
                 windows: Vec::new(),
             })
             .collect()
+    }
+
+    fn test_gorillas() -> [Gorilla; 2] {
+        [
+            Gorilla { x: 100.0, y: 100.0 },
+            Gorilla { x: 500.0, y: 100.0 },
+        ]
     }
 
     fn assert_banana_extent(rotation: BananaRotation, width: usize, height: usize) {

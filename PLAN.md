@@ -145,6 +145,7 @@ This plan aligns `GOAL.md` with the current Rust implementation. The target is m
   - [x] Add banana drawing with four orientation frames.
   - [x] Add wind arrow.
   - [ ] Add building and gorilla explosion animations.
+    - Temporary: demo building impacts show a simple expanding explosion circle, and gorilla hits use a separate temporary gorilla-centered blast.
 - [ ] Render HUD exactly enough for gameplay:
   - [ ] Player names at top left/top right.
   - [ ] Angle and velocity prompts at original columns.
@@ -179,16 +180,18 @@ This plan aligns `GOAL.md` with the current Rust implementation. The target is m
   - [x] Treat velocity below `2` as self-hit.
   - [x] Add unit tests for representative trajectories.
   - [x] Render projectile samples as a temporary demo shot.
-  - [ ] Wire projectile samples into turn state and rendering.
+  - [x] Wire projectile samples into temporary turn state and rendering.
+    - Current state alternates demo tossers automatically; typed input is still pending.
 - [ ] Collision:
-  - [ ] Detect out-of-bounds using original thresholds.
-  - [ ] Emulate original banana collision probe: player-dependent leading edge, `LookX`/`LookY` diagonal samples, and sampled color priority.
-  - [ ] Detect building hits and trigger normal explosion.
-  - [ ] Detect gorilla hits and trigger gorilla explosion.
-  - [ ] Detect sun hit as expression-only collision while allowing the banana to pass through until it leaves the sun region.
-  - [ ] Tune explicit geometry or CPU masks to match visible BASIC `POINT` behavior.
+  - [x] Detect out-of-bounds using original thresholds.
+  - [x] Emulate original banana collision probe: player-dependent leading edge, `LookX`/`LookY` diagonal samples, and sampled color priority.
+  - [x] Detect building hits and trigger normal explosion.
+  - [x] Detect gorilla hits and trigger gorilla explosion.
+  - [x] Detect sun hit as expression-only collision while allowing the banana to pass through until it leaves the sun region.
+  - [x] Tune explicit geometry or CPU masks to match visible BASIC `POINT` behavior.
 - [ ] Scoring:
-  - [ ] Direct hit awards the throwing player.
+  - [x] Direct hit awards the throwing player.
+    - Current state updates scores internally on gorilla-hit round resolution; HUD text is still pending.
   - [ ] Self-hit awards the opponent.
   - [ ] Run the configured number of rounds/games, matching BASIC `FOR i = 1 TO NumGames`.
   - [ ] Add tests for scoring outcomes.
@@ -209,8 +212,10 @@ This plan aligns `GOAL.md` with the current Rust implementation. The target is m
   - [ ] Generate gorilla frames before play, or make the modern equivalent explicit.
   - [ ] If `V`, play the original starring/dance sequence.
 - [ ] Play loop:
-  - [ ] Create a new city each round.
-  - [ ] Alternate tosser.
+  - [x] Create a new city each round.
+    - Current state resets the city after a gorilla-hit round ends.
+  - [x] Alternate tosser.
+    - Current state alternates demo tossers after misses and between rounds.
   - [ ] Preserve the original cross-round tosser toggle (`J` is not reset inside each round).
   - [ ] Reset sun after a sun hit.
   - [ ] Pause briefly after a round win.
