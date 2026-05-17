@@ -165,15 +165,42 @@ pub(crate) fn cue_to_events(cue: SoundCue, start: Instant) -> Vec<(Instant, Audi
 #[allow(dead_code)]
 impl AudioScheduler {
     pub(crate) fn new() -> Result<Self> {
-        todo!()
+        use synthie::prelude::setup_audio;
+        use synthie::presets::sid::default_patches;
+
+        let (stream, tx, _scope_rx) = setup_audio()?;
+
+        let patch = default_patches()
+            .into_iter()
+            .find(|p| p.name == "PWM Lead")
+            .expect("synthie 0.3.0 ships PWM Lead preset");
+        let _ = tx.send(AudioEvent::LoadPatch(Box::new(patch.params)));
+
+        Ok(Self {
+            _stream: stream,
+            tx,
+            queue: Vec::new(),
+        })
     }
 
-    pub(crate) fn play(&mut self, _cue: SoundCue) {
-        todo!()
+    pub(crate) fn play(&mut self, cue: SoundCue) {
+        let _ = self.tx.send(AudioEvent::Panic);
+        self.queue.clear();
+        let events = cue_to_events(cue, Instant::now());
+        self.queue.extend(events);
     }
 
     pub(crate) fn tick(&mut self) {
-        todo!()
+        let now = Instant::now();
+        let mut i = 0;
+        while i < self.queue.len() {
+            if self.queue[i].0 <= now {
+                let (_, event) = self.queue.remove(i);
+                let _ = self.tx.send(event);
+            } else {
+                i += 1;
+            }
+        }
     }
 }
 
