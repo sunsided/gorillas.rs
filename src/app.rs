@@ -105,7 +105,9 @@ impl ApplicationHandler for App {
                 match event.logical_key {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
                     Key::Named(NamedKey::Backspace) => self.game.handle_backspace(),
-                    Key::Named(NamedKey::Enter) => self.game.handle_submit(),
+                    Key::Named(NamedKey::Enter) => {
+                        let _ = self.game.handle_submit();
+                    }
                     Key::Character(ref text) => {
                         for ch in text.chars() {
                             self.game.handle_char(ch);
@@ -129,7 +131,7 @@ impl ApplicationHandler for App {
                     let now = Instant::now();
                     let dt = now.duration_since(self.last_update).as_secs_f32();
                     self.last_update = now;
-                    self.game.update(dt);
+                    let _ = self.game.update(dt);
 
                     let frame = self.game.frame();
                     let (outcome, screenshot) = if self.first_screenshot_taken {

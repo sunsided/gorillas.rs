@@ -151,14 +151,15 @@ impl Game {
         }
     }
 
-    pub fn update(&mut self, dt: f32) {
+    pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
+        let cues = Vec::new();
         if let Some(explosion) = self.explosion.as_mut() {
             explosion.advance(dt);
             if explosion.finished() {
                 let explosion = self.explosion.take().unwrap();
                 self.finish_explosion(explosion);
             }
-            return;
+            return cues;
         }
 
         if matches!(self.turn_phase, TurnPhase::VictoryDance { .. }) {
@@ -180,11 +181,11 @@ impl Game {
                     input: String::new(),
                 };
             }
-            return;
+            return cues;
         }
 
         if self.projectile.is_none() {
-            return;
+            return cues;
         }
 
         if let TurnPhase::ThrowingArm { timer, .. } = &mut self.turn_phase {
@@ -203,7 +204,7 @@ impl Game {
         let sample = projectile.sample(self.round.wind, self.gravity);
         if !sample.on_screen {
             self.advance_turn();
-            return;
+            return cues;
         }
 
         let collision_canvas = self.collision_canvas();
@@ -236,6 +237,7 @@ impl Game {
                 self.sun_shocked = false;
             }
         }
+        cues
     }
 
     pub fn frame(&self) -> Frame {
@@ -284,9 +286,10 @@ impl Game {
         self.active_input_mut().pop();
     }
 
-    pub fn handle_submit(&mut self) {
+    pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
+        let cues = Vec::new();
         if self.projectile.is_some() || self.explosion.is_some() {
-            return;
+            return cues;
         }
 
         match &mut self.turn_phase {
@@ -294,7 +297,7 @@ impl Game {
                 let angle = parse_numeric_input(input);
                 if angle > 360.0 {
                     *input = String::new();
-                    return;
+                    return cues;
                 }
                 self.turn_phase = TurnPhase::EnterVelocity {
                     angle_deg: angle,
@@ -309,7 +312,7 @@ impl Game {
                         self.current_player.other().index(),
                     ));
                     self.turn_phase = TurnPhase::ProjectileFlying;
-                    return;
+                    return cues;
                 }
 
                 let mut angle = *angle_deg;
@@ -333,6 +336,7 @@ impl Game {
             | TurnPhase::VictoryDance { .. }
             | TurnPhase::ProjectileFlying => {}
         }
+        cues
     }
 
     fn draw_hud(&self, canvas: &mut Canvas) {
@@ -537,9 +541,9 @@ impl GameState {
         }
     }
 
-    pub fn update(&mut self, dt: f32) {
+    pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::ConfigMenu => {}
+            AppScreen::ConfigMenu => vec![],
             AppScreen::Playing => self.game.update(dt),
         }
     }
@@ -644,9 +648,12 @@ impl GameState {
         }
     }
 
-    pub fn handle_submit(&mut self) {
+    pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::ConfigMenu => self.config_handle_submit(),
+            AppScreen::ConfigMenu => {
+                self.config_handle_submit();
+                vec![]
+            }
             AppScreen::Playing => self.game.handle_submit(),
         }
     }
@@ -2018,7 +2025,7 @@ mod tests {
             shot_in_sun: false,
         });
 
-        game.update(PROJECTILE_TIME_STEP);
+        let _ = game.update(PROJECTILE_TIME_STEP);
 
         assert!(game.projectile.is_none());
         assert_eq!(game.current_player, Player::Two);
@@ -2129,7 +2136,7 @@ mod tests {
             shot_in_sun: false,
         });
 
-        game.update(PROJECTILE_TIME_STEP);
+        let _ = game.update(PROJECTILE_TIME_STEP);
 
         assert!(game.projectile.is_none());
         let explosion = game.explosion.unwrap();
@@ -2146,7 +2153,7 @@ mod tests {
             elapsed: EXPLOSION_DURATION,
         });
 
-        game.update(PROJECTILE_TIME_STEP);
+        let _ = game.update(PROJECTILE_TIME_STEP);
 
         assert!(game.projectile.is_none());
         assert!(game.explosion.is_none());
@@ -2169,7 +2176,7 @@ mod tests {
             shot_in_sun: false,
         });
 
-        game.update(PROJECTILE_TIME_STEP);
+        let _ = game.update(PROJECTILE_TIME_STEP);
 
         assert_eq!(game.explosion, Some(Explosion::gorilla(1, 0)));
         assert!(game.explosion_hits_gorilla(1));
@@ -2181,7 +2188,7 @@ mod tests {
         game.handle_char('3');
         game.handle_char('6');
         game.handle_char('1');
-        game.handle_submit();
+        let _ = game.handle_submit();
         assert_eq!(
             game.turn_phase,
             TurnPhase::EnterAngle {
@@ -2196,7 +2203,7 @@ mod tests {
 
         game.handle_char('4');
         game.handle_char('5');
-        game.handle_submit();
+        let _ = game.handle_submit();
         assert_eq!(
             game.turn_phase,
             TurnPhase::EnterVelocity {
@@ -2207,7 +2214,7 @@ mod tests {
 
         game.handle_char('5');
         game.handle_char('0');
-        game.handle_submit();
+        let _ = game.handle_submit();
         assert!(matches!(
             game.turn_phase,
             TurnPhase::ThrowingArm {
@@ -2229,10 +2236,10 @@ mod tests {
 
         game.handle_char('6');
         game.handle_char('0');
-        game.handle_submit();
+        let _ = game.handle_submit();
         game.handle_char('4');
         game.handle_char('0');
-        game.handle_submit();
+        let _ = game.handle_submit();
 
         assert_eq!(game.projectile.unwrap().angle_degrees, 120.0);
     }
@@ -2280,7 +2287,7 @@ mod tests {
             input: String::from("50"),
         };
 
-        game.handle_submit();
+        let _ = game.handle_submit();
 
         assert!(
             matches!(
@@ -2302,9 +2309,9 @@ mod tests {
             angle_deg: 45.0,
             input: String::from("50"),
         };
-        game.handle_submit();
+        let _ = game.handle_submit();
 
-        game.update(THROW_ARM_DURATION + 0.05);
+        let _ = game.update(THROW_ARM_DURATION + 0.05);
 
         assert_eq!(game.turn_phase, TurnPhase::ProjectileFlying);
     }
@@ -2330,7 +2337,7 @@ mod tests {
             elapsed: GORILLA_EXPLOSION_DURATION,
         });
 
-        game.update(PROJECTILE_TIME_STEP);
+        let _ = game.update(PROJECTILE_TIME_STEP);
 
         assert!(
             matches!(
@@ -2357,7 +2364,7 @@ mod tests {
             timer: VICTORY_DANCE_INTERVAL,
         };
 
-        game.update(VICTORY_DANCE_INTERVAL + 0.01);
+        let _ = game.update(VICTORY_DANCE_INTERVAL + 0.01);
 
         assert!(
             matches!(game.turn_phase, TurnPhase::VictoryDance { cycle: 1, .. }),
@@ -2377,7 +2384,7 @@ mod tests {
             timer: VICTORY_DANCE_INTERVAL,
         };
 
-        game.update(VICTORY_DANCE_INTERVAL + 0.01);
+        let _ = game.update(VICTORY_DANCE_INTERVAL + 0.01);
 
         assert_eq!(
             game.turn_phase,
@@ -2488,16 +2495,16 @@ mod tests {
         let mut state = GameState::new();
         assert!(matches!(state.screen, AppScreen::ConfigMenu));
 
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.active_field, ConfigField::PlayerTwoName);
 
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.active_field, ConfigField::TargetScore);
 
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.active_field, ConfigField::Gravity);
 
-        state.handle_submit();
+        let _ = state.handle_submit();
 
         assert_eq!(state.screen, AppScreen::Playing);
         assert_eq!(state.game.player_names[0], "Player 1");
@@ -2524,7 +2531,7 @@ mod tests {
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::PlayerOneName;
         let frame_field0 = state.frame();
-        state.handle_submit();
+        let _ = state.handle_submit();
         let frame_field1 = state.frame();
         assert_ne!(
             frame_field0.vertices.len(),
@@ -2592,7 +2599,7 @@ mod tests {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::PlayerOneName;
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.config.player_names[0], "Player 1");
         assert_eq!(state.active_field, ConfigField::PlayerTwoName);
         assert_eq!(state.field_input, "");
@@ -2606,7 +2613,7 @@ mod tests {
         for ch in "Alice".chars() {
             state.handle_char(ch);
         }
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.config.player_names[0], "Alice");
         assert_eq!(state.active_field, ConfigField::PlayerTwoName);
     }
@@ -2617,7 +2624,7 @@ mod tests {
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::TargetScore;
         state.handle_char('0');
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.active_field, ConfigField::TargetScore);
         assert_eq!(state.field_input, "");
     }
@@ -2627,7 +2634,7 @@ mod tests {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::TargetScore;
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.config.target_score, 3);
         assert_eq!(state.active_field, ConfigField::Gravity);
     }
@@ -2638,7 +2645,7 @@ mod tests {
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::Gravity;
         state.handle_char('0');
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.active_field, ConfigField::Gravity);
         assert_eq!(state.field_input, "");
     }
@@ -2648,7 +2655,7 @@ mod tests {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::Gravity;
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert!((state.config.gravity - 9.8).abs() < 0.001);
         assert_eq!(state.screen, AppScreen::Playing);
     }
@@ -2659,7 +2666,7 @@ mod tests {
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::Gravity;
         state.config.gravity = 20.0;
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert!((state.game.gravity - 20.0).abs() < 0.001);
     }
 
@@ -2670,7 +2677,7 @@ mod tests {
         state.config.player_names[0] = String::from("Alice");
         state.config.player_names[1] = String::from("Bob");
         state.active_field = ConfigField::Gravity;
-        state.handle_submit();
+        let _ = state.handle_submit();
         assert_eq!(state.game.player_names[0], "Alice");
         assert_eq!(state.game.player_names[1], "Bob");
     }
@@ -2729,11 +2736,27 @@ mod tests {
         });
         game.gravity = DEFAULT_GRAVITY * 10_000.0;
 
-        game.update(PROJECTILE_TIME_STEP);
+        let _ = game.update(PROJECTILE_TIME_STEP);
 
         assert!(
             game.projectile.is_none(),
             "projectile should fall off screen immediately with extreme gravity"
         );
+    }
+
+    #[test]
+    fn game_update_returns_vec_of_sound_cues() {
+        use crate::audio::SoundCue;
+        let mut game = Game::new();
+        let cues: Vec<SoundCue> = game.update(0.016);
+        assert!(cues.is_empty()); // no cues when idle
+    }
+
+    #[test]
+    fn game_handle_submit_returns_vec_of_sound_cues() {
+        use crate::audio::SoundCue;
+        let mut game = Game::new();
+        let cues: Vec<SoundCue> = game.handle_submit();
+        let _ = cues; // just verify it compiles and returns a Vec
     }
 }
