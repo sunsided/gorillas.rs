@@ -30,7 +30,7 @@ const DEFAULT_GRAVITY: f32 = 9.8;
 const SUN_HEIGHT_LIMIT: f32 = 39.0;
 const SUN_CLEAR_RADIUS: f32 = 20.0;
 const EXPLOSION_DURATION: f32 = 0.3;
-const EXPLOSION_MAX_RADIUS: f32 = 14.0;
+const EXPLOSION_MAX_RADIUS: f32 = 7.0;
 const GORILLA_EXPLOSION_DURATION: f32 = 0.6;
 const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
 const TEXT_CELL_WIDTH: i32 = 8;
@@ -299,7 +299,7 @@ impl Game {
     fn draw_hud(&self, canvas: &mut Canvas) {
         draw_text(canvas, 1, 1, &self.player_names[0], HUD_TEXT);
 
-        let right_col = 80i32 - self.player_names[1].len() as i32;
+        let right_col = 79i32 - self.player_names[1].len() as i32;
         draw_text(
             canvas,
             1,
@@ -322,8 +322,9 @@ impl Game {
                 draw_text(canvas, 2, locate_col, "Angle:", HUD_TEXT);
                 draw_text(canvas, 2, locate_col + 7, input, HUD_TEXT);
             }
-            TurnPhase::EnterVelocity { input, .. } => {
+            TurnPhase::EnterVelocity { angle_deg, input } => {
                 draw_text(canvas, 2, locate_col, "Angle:", HUD_TEXT);
+                draw_text(canvas, 2, locate_col + 7, &format!("{angle_deg}"), HUD_TEXT);
                 draw_text(canvas, 3, locate_col, "Velocity:", HUD_TEXT);
                 draw_text(canvas, 3, locate_col + 10, input, HUD_TEXT);
             }
@@ -604,7 +605,7 @@ impl Explosion {
                 winner_index: _,
             } => {
                 let gorilla = gorillas[gorilla_index];
-                (gorilla.x + 8.5, gorilla.y + 12.0)
+                (gorilla.x + 12.0, gorilla.y + 12.0)
             }
         }
     }
