@@ -202,6 +202,17 @@ impl AudioScheduler {
             }
         }
     }
+
+    pub(crate) fn enqueue_after(&mut self, cue: SoundCue) {
+        let start = self
+            .queue
+            .iter()
+            .map(|(t, _)| *t)
+            .max()
+            .map(|last| last + Duration::from_millis(10))
+            .unwrap_or_else(Instant::now);
+        self.queue.extend(cue_to_events(cue, start));
+    }
 }
 
 #[cfg(test)]

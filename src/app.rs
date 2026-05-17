@@ -86,8 +86,12 @@ impl App {
 
 fn dispatch_cues(audio: &mut Option<AudioScheduler>, cues: Vec<SoundCue>) {
     if let Some(audio) = audio.as_mut() {
-        for cue in cues {
-            audio.play(cue);
+        let mut iter = cues.into_iter();
+        if let Some(first) = iter.next() {
+            audio.play(first);
+        }
+        for cue in iter {
+            audio.enqueue_after(cue);
         }
     }
 }
