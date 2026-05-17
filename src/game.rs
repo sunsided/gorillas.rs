@@ -654,8 +654,7 @@ impl GameState {
     fn config_handle_char(&mut self, ch: char) {
         match self.active_field {
             ConfigField::PlayerOneName | ConfigField::PlayerTwoName => {
-                let code = ch as u32;
-                if (32..=126).contains(&code) && self.field_input.len() < 10 {
+                if ch.is_ascii_alphanumeric() && self.field_input.len() < 10 {
                     self.field_input.push(ch);
                 }
             }
@@ -2535,22 +2534,23 @@ mod tests {
     }
 
     #[test]
-    fn config_name_field_accepts_printable_ascii() {
+    fn config_name_field_accepts_alphanumeric() {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::PlayerOneName;
-        for ch in "Ab !".chars() {
+        for ch in "Ab3".chars() {
             state.handle_char(ch);
         }
-        assert_eq!(state.field_input, "Ab !");
+        assert_eq!(state.field_input, "Ab3");
     }
 
     #[test]
-    fn config_name_field_rejects_non_printable() {
+    fn config_name_field_rejects_non_alphanumeric() {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::PlayerOneName;
-        state.handle_char('\x1f');
+        state.handle_char(' ');
+        state.handle_char('!');
         state.handle_char('X');
         assert_eq!(state.field_input, "X");
     }
