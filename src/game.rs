@@ -152,11 +152,14 @@ impl Game {
     }
 
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
-        let cues = Vec::new();
+        let mut cues = Vec::new();
         if let Some(explosion) = self.explosion.as_mut() {
             explosion.advance(dt);
             if explosion.finished() {
                 let explosion = self.explosion.take().unwrap();
+                if matches!(explosion.kind, ExplosionKind::Gorilla { .. }) {
+                    cues.push(crate::audio::SoundCue::VictoryDance);
+                }
                 self.finish_explosion(explosion);
             }
             return cues;
@@ -228,12 +231,17 @@ impl Game {
             }
             CollisionProbe::Impact { kind, x, y } => {
                 self.projectile = None;
-                self.explosion = Some(match kind {
-                    ImpactKind::Building => Explosion::building(x, y),
-                    ImpactKind::Gorilla(player_index) => {
-                        Explosion::gorilla(player_index, projectile.player.index())
+                match kind {
+                    ImpactKind::Building => {
+                        cues.push(crate::audio::SoundCue::BuildingExplosion);
+                        self.explosion = Some(Explosion::building(x, y));
                     }
-                });
+                    ImpactKind::Gorilla(player_index) => {
+                        cues.push(crate::audio::SoundCue::GorillaExplosion);
+                        self.explosion =
+                            Some(Explosion::gorilla(player_index, projectile.player.index()));
+                    }
+                }
                 self.sun_shocked = false;
             }
         }
@@ -287,7 +295,7 @@ impl Game {
     }
 
     pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
-        let cues = Vec::new();
+        let mut cues = Vec::new();
         if self.projectile.is_some() || self.explosion.is_some() {
             return cues;
         }
@@ -331,6 +339,7 @@ impl Game {
                     player,
                     timer: THROW_ARM_DURATION,
                 };
+                cues.push(crate::audio::SoundCue::Throw);
             }
             TurnPhase::ThrowingArm { .. }
             | TurnPhase::VictoryDance { .. }
@@ -652,7 +661,14 @@ impl GameState {
         match self.screen {
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
-                vec![]
+                if matches!(self.screen, AppScreen::Playing) {
+                    vec![
+                        crate::audio::SoundCue::Intro,
+                        crate::audio::SoundCue::GorillaIntro,
+                    ]
+                } else {
+                    vec![]
+                }
             }
             AppScreen::Playing => self.game.handle_submit(),
         }
@@ -2758,5 +2774,68 @@ mod tests {
         let mut game = Game::new();
         let cues: Vec<SoundCue> = game.handle_submit();
         let _ = cues; // just verify it compiles and returns a Vec
+    }
+
+    #[test]
+    fn handle_submit_emits_throw_cue_for_valid_velocity() {
+        use crate::audio::SoundCue;
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::EnterVelocity {
+            angle_deg: 45.0,
+            input: String::from("50"),
+        };
+        let cues = game.handle_submit();
+        assert!(
+            cues.contains(&SoundCue::Throw),
+            "expected Throw cue, got {cues:?}"
+        );
+    }
+
+    #[test]
+    fn handle_submit_does_not_emit_throw_for_angle_entry() {
+        use crate::audio::SoundCue;
+        let mut game = Game::new();
+        // Submitting angle (not velocity) should not emit Throw
+        game.handle_char('4');
+        game.handle_char('5');
+        let cues = game.handle_submit();
+        assert!(!cues.contains(&SoundCue::Throw));
+    }
+
+    #[test]
+    fn update_emits_victory_dance_cue_when_gorilla_explosion_finishes() {
+        use crate::audio::SoundCue;
+        let mut game = Game::new();
+        game.explosion = Some(Explosion {
+            kind: ExplosionKind::Gorilla {
+                gorilla_index: 1,
+                winner_index: 0,
+            },
+            elapsed: GORILLA_EXPLOSION_DURATION,
+        });
+        let cues = game.update(PROJECTILE_TIME_STEP);
+        assert!(
+            cues.contains(&SoundCue::VictoryDance),
+            "expected VictoryDance cue, got {cues:?}"
+        );
+    }
+
+    #[test]
+    fn game_state_handle_submit_emits_intro_cues_when_entering_playing() {
+        use crate::audio::SoundCue;
+        let mut state = GameState::new();
+        // Submit through all 4 config fields (defaults); last one triggers game start
+        let _ = state.handle_submit(); // P1 name
+        let _ = state.handle_submit(); // P2 name
+        let _ = state.handle_submit(); // target score
+        let cues = state.handle_submit(); // gravity -> starts game
+        assert!(
+            cues.contains(&SoundCue::Intro),
+            "expected Intro cue on game start, got {cues:?}"
+        );
+        assert!(
+            cues.contains(&SoundCue::GorillaIntro),
+            "expected GorillaIntro cue on game start, got {cues:?}"
+        );
     }
 }
