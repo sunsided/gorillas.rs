@@ -10,6 +10,7 @@ use winit::{
 };
 
 use crate::{
+    audio::{AudioScheduler, SoundCue},
     game::{GameState, LOGICAL_HEIGHT, LOGICAL_WIDTH},
     render::{RenderOutcome, Renderer, RendererInitError},
 };
@@ -41,16 +42,21 @@ struct App {
     game: GameState,
     last_update: Instant,
     first_screenshot_taken: bool,
+    audio: Option<AudioScheduler>,
 }
 
 impl App {
     fn new() -> Self {
+        let audio = AudioScheduler::new()
+            .map_err(|e| eprintln!("audio init failed: {e}"))
+            .ok();
         Self {
             window: None,
             renderer: None,
             game: GameState::new(),
             last_update: Instant::now(),
             first_screenshot_taken: false,
+            audio,
         }
     }
 
@@ -75,6 +81,14 @@ impl App {
         self.window = Some(window);
         self.renderer = Some(renderer);
         Ok(())
+    }
+}
+
+fn dispatch_cues(audio: &mut Option<AudioScheduler>, cues: Vec<SoundCue>) {
+    if let Some(audio) = audio.as_mut() {
+        for cue in cues {
+            audio.play(cue);
+        }
     }
 }
 
@@ -106,7 +120,8 @@ impl ApplicationHandler for App {
                     Key::Named(NamedKey::Escape) => event_loop.exit(),
                     Key::Named(NamedKey::Backspace) => self.game.handle_backspace(),
                     Key::Named(NamedKey::Enter) => {
-                        let _ = self.game.handle_submit();
+                        let cues = self.game.handle_submit();
+                        dispatch_cues(&mut self.audio, cues);
                     }
                     Key::Character(ref text) => {
                         for ch in text.chars() {
@@ -131,7 +146,12 @@ impl ApplicationHandler for App {
                     let now = Instant::now();
                     let dt = now.duration_since(self.last_update).as_secs_f32();
                     self.last_update = now;
-                    let _ = self.game.update(dt);
+                    if let Some(audio) = self.audio.as_mut() {
+                        audio.tick();
+                    }
+
+                    let cues = self.game.update(dt);
+                    dispatch_cues(&mut self.audio, cues);
 
                     let frame = self.game.frame();
                     let (outcome, screenshot) = if self.first_screenshot_taken {
