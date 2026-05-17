@@ -128,6 +128,7 @@ pub struct Game {
     scores: [u32; 2],
     player_names: [String; 2],
     turn_phase: TurnPhase,
+    gravity: f32,
 }
 
 impl Game {
@@ -146,6 +147,7 @@ impl Game {
             turn_phase: TurnPhase::EnterAngle {
                 input: String::new(),
             },
+            gravity: DEFAULT_GRAVITY,
         }
     }
 
@@ -198,7 +200,7 @@ impl Game {
         }
 
         let projectile = self.projectile.unwrap();
-        let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
+        let sample = projectile.sample(self.round.wind, self.gravity);
         if !sample.on_screen {
             self.advance_turn();
             return;
@@ -240,7 +242,7 @@ impl Game {
         let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
         self.draw_scene(&mut canvas, true);
         if let Some(projectile) = self.projectile {
-            let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
+            let sample = projectile.sample(self.round.wind, self.gravity);
             if sample.on_screen && !projectile.shot_in_sun {
                 draw_banana(&mut canvas, sample.x, sample.y, sample.rotation);
             }
@@ -2167,5 +2169,32 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    #[test]
+    fn game_gravity_field_controls_projectile_fall_rate() {
+        let mut game = Game::new();
+        game.round.buildings.clear();
+        game.gorillas = [
+            Gorilla { x: 50.0, y: 200.0 },
+            Gorilla { x: 580.0, y: 200.0 },
+        ];
+        game.turn_phase = TurnPhase::ProjectileFlying;
+        game.projectile = Some(Projectile {
+            start: Gorilla { x: 50.0, y: 200.0 },
+            player: Player::One,
+            angle_degrees: 0.0,
+            velocity: 1.0,
+            elapsed: 0.0,
+            shot_in_sun: false,
+        });
+        game.gravity = DEFAULT_GRAVITY * 10_000.0;
+
+        game.update(PROJECTILE_TIME_STEP);
+
+        assert!(
+            game.projectile.is_none(),
+            "projectile should fall off screen immediately with extreme gravity"
+        );
     }
 }
