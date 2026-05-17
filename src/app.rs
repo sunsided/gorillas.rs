@@ -10,7 +10,7 @@ use winit::{
 };
 
 use crate::{
-    game::{Game, LOGICAL_HEIGHT, LOGICAL_WIDTH},
+    game::{GameState, LOGICAL_HEIGHT, LOGICAL_WIDTH},
     render::{RenderOutcome, Renderer, RendererInitError},
 };
 
@@ -38,7 +38,7 @@ pub fn run() -> Result<(), AppError> {
 struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
-    game: Game,
+    game: GameState,
     last_update: Instant,
     first_screenshot_taken: bool,
 }
@@ -48,7 +48,7 @@ impl App {
         Self {
             window: None,
             renderer: None,
-            game: Game::new(),
+            game: GameState::new(),
             last_update: Instant::now(),
             first_screenshot_taken: false,
         }

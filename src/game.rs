@@ -472,6 +472,115 @@ impl Game {
     }
 }
 
+#[allow(dead_code)]
+pub struct MatchConfig {
+    pub player_names: [String; 2],
+    pub target_score: u32,
+    pub gravity: f32,
+}
+
+impl Default for MatchConfig {
+    fn default() -> Self {
+        Self {
+            player_names: [String::from("Player 1"), String::from("Player 2")],
+            target_score: 3,
+            gravity: DEFAULT_GRAVITY,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum AppScreen {
+    ConfigMenu,
+    Playing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum ConfigField {
+    PlayerOneName,
+    PlayerTwoName,
+    TargetScore,
+    Gravity,
+}
+
+impl ConfigField {
+    #[allow(dead_code)]
+    fn index(self) -> usize {
+        match self {
+            Self::PlayerOneName => 0,
+            Self::PlayerTwoName => 1,
+            Self::TargetScore => 2,
+            Self::Gravity => 3,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub struct GameState {
+    pub screen: AppScreen,
+    config: MatchConfig,
+    active_field: ConfigField,
+    field_input: String,
+    game: Game,
+}
+
+impl GameState {
+    pub fn new() -> Self {
+        Self {
+            screen: AppScreen::Playing,
+            config: MatchConfig::default(),
+            active_field: ConfigField::PlayerOneName,
+            field_input: String::new(),
+            game: Game::new(),
+        }
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        match self.screen {
+            AppScreen::ConfigMenu => {}
+            AppScreen::Playing => self.game.update(dt),
+        }
+    }
+
+    pub fn frame(&self) -> Frame {
+        match self.screen {
+            AppScreen::ConfigMenu => {
+                let canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                Frame {
+                    logical_width: LOGICAL_WIDTH,
+                    logical_height: LOGICAL_HEIGHT,
+                    clear_color: BACKGROUND,
+                    vertices: canvas.into_vertices(),
+                }
+            }
+            AppScreen::Playing => self.game.frame(),
+        }
+    }
+
+    pub fn handle_char(&mut self, ch: char) {
+        match self.screen {
+            AppScreen::ConfigMenu => {}
+            AppScreen::Playing => self.game.handle_char(ch),
+        }
+    }
+
+    pub fn handle_backspace(&mut self) {
+        match self.screen {
+            AppScreen::ConfigMenu => {}
+            AppScreen::Playing => self.game.handle_backspace(),
+        }
+    }
+
+    pub fn handle_submit(&mut self) {
+        match self.screen {
+            AppScreen::ConfigMenu => {}
+            AppScreen::Playing => self.game.handle_submit(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Round {
     buildings: Vec<Building>,
@@ -2201,6 +2310,21 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    #[test]
+    fn game_state_new_starts_in_playing() {
+        let state = GameState::new();
+        assert!(matches!(state.screen, AppScreen::Playing));
+    }
+
+    #[test]
+    fn game_state_default_config_has_correct_defaults() {
+        let config = MatchConfig::default();
+        assert_eq!(config.player_names[0], "Player 1");
+        assert_eq!(config.player_names[1], "Player 2");
+        assert_eq!(config.target_score, 3);
+        assert!((config.gravity - 9.8).abs() < f32::EPSILON);
     }
 
     #[test]
