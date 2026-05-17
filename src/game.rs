@@ -547,7 +547,8 @@ impl GameState {
     pub fn frame(&self) -> Frame {
         match self.screen {
             AppScreen::ConfigMenu => {
-                let canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                self.render_config_screen(&mut canvas);
                 Frame {
                     logical_width: LOGICAL_WIDTH,
                     logical_height: LOGICAL_HEIGHT,
@@ -556,6 +557,74 @@ impl GameState {
                 }
             }
             AppScreen::Playing => self.game.frame(),
+        }
+    }
+
+    fn render_config_screen(&self, canvas: &mut Canvas) {
+        let active = self.active_field.index();
+
+        // row 8, col 15: Player 1 name
+        draw_text(
+            canvas,
+            8,
+            15,
+            "Name of Player 1 (Default = 'Player 1'): ",
+            HUD_TEXT,
+        );
+        if active > 0 {
+            draw_text(canvas, 8, 56, &self.config.player_names[0], HUD_TEXT);
+        } else {
+            draw_text(canvas, 8, 56, &self.field_input, HUD_TEXT);
+            draw_text(canvas, 8, 56 + self.field_input.len(), "_", HUD_TEXT);
+        }
+
+        // row 10, col 15: Player 2 name
+        draw_text(
+            canvas,
+            10,
+            15,
+            "Name of Player 2 (Default = 'Player 2'): ",
+            HUD_TEXT,
+        );
+        if active > 1 {
+            draw_text(canvas, 10, 56, &self.config.player_names[1], HUD_TEXT);
+        } else if active == 1 {
+            draw_text(canvas, 10, 56, &self.field_input, HUD_TEXT);
+            draw_text(canvas, 10, 56 + self.field_input.len(), "_", HUD_TEXT);
+        }
+
+        // row 12, col 13: Target score
+        draw_text(
+            canvas,
+            12,
+            13,
+            "Play to how many total points (Default = 3): ",
+            HUD_TEXT,
+        );
+        if active > 2 {
+            draw_text(
+                canvas,
+                12,
+                58,
+                &format!("{}", self.config.target_score),
+                HUD_TEXT,
+            );
+        } else if active == 2 {
+            draw_text(canvas, 12, 58, &self.field_input, HUD_TEXT);
+            draw_text(canvas, 12, 58 + self.field_input.len(), "_", HUD_TEXT);
+        }
+
+        // row 14, col 17: Gravity
+        draw_text(
+            canvas,
+            14,
+            17,
+            "Gravity in Meters/Sec (Earth = 9.8): ",
+            HUD_TEXT,
+        );
+        if active == 3 {
+            draw_text(canvas, 14, 54, &self.field_input, HUD_TEXT);
+            draw_text(canvas, 14, 54 + self.field_input.len(), "_", HUD_TEXT);
         }
     }
 
@@ -2389,6 +2458,33 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    #[test]
+    fn config_screen_renders_player_one_prompt_on_canvas() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        let frame = state.frame();
+        assert!(
+            !frame.vertices.is_empty(),
+            "config screen should produce render vertices"
+        );
+    }
+
+    #[test]
+    fn config_screen_shows_cursor_on_active_field_only() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        let frame_field0 = state.frame();
+        state.handle_submit();
+        let frame_field1 = state.frame();
+        assert_ne!(
+            frame_field0.vertices.len(),
+            frame_field1.vertices.len(),
+            "frames should differ as cursor and values change between fields"
+        );
     }
 
     #[test]
