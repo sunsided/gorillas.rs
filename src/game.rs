@@ -210,7 +210,7 @@ impl Game {
         self.draw_scene(&mut canvas, true);
         if let Some(projectile) = self.projectile {
             let sample = projectile.sample(self.round.wind, DEFAULT_GRAVITY);
-            if sample.on_screen {
+            if sample.on_screen && !projectile.shot_in_sun {
                 draw_banana(&mut canvas, sample.x, sample.y, sample.rotation);
             }
         }
@@ -258,7 +258,11 @@ impl Game {
 
         match &mut self.turn_phase {
             TurnPhase::EnterAngle { input } => {
-                let angle = parse_angle_input(input);
+                let angle = parse_numeric_input(input);
+                if angle > 360.0 {
+                    *input = String::new();
+                    return;
+                }
                 self.turn_phase = TurnPhase::EnterVelocity {
                     angle_deg: angle,
                     input: String::new(),
@@ -266,6 +270,15 @@ impl Game {
             }
             TurnPhase::EnterVelocity { angle_deg, input } => {
                 let velocity = parse_numeric_input(input);
+                if velocity < MIN_THROW_VELOCITY {
+                    self.explosion = Some(Explosion::gorilla(
+                        self.current_player.index(),
+                        self.current_player.other().index(),
+                    ));
+                    self.turn_phase = TurnPhase::ProjectileFlying;
+                    return;
+                }
+
                 let mut angle = *angle_deg;
                 if self.current_player == Player::Two {
                     angle = 180.0 - angle;
@@ -1027,23 +1040,12 @@ fn probe_projectile_collision(
     }
 }
 
-fn resolve_hit_gorilla(sample: ProjectileSample, gorillas: &[Gorilla; 2]) -> usize {
-    gorillas
-        .iter()
-        .enumerate()
-        .min_by(|(_, left), (_, right)| {
-            gorilla_hit_distance(sample, **left)
-                .partial_cmp(&gorilla_hit_distance(sample, **right))
-                .unwrap()
-        })
-        .map(|(index, _)| index)
-        .unwrap_or(0)
-}
-
-fn gorilla_hit_distance(sample: ProjectileSample, gorilla: Gorilla) -> f32 {
-    let center_x = gorilla.x + 8.5;
-    let center_y = gorilla.y + 12.0;
-    (sample.x - center_x).hypot(sample.y - center_y)
+fn resolve_hit_gorilla(sample: ProjectileSample, _gorillas: &[Gorilla; 2]) -> usize {
+    if sample.x < LOGICAL_WIDTH as f32 / 2.0 {
+        0
+    } else {
+        1
+    }
 }
 
 fn probe_offsets(player: Player) -> [(f32, f32); 2] {
@@ -1059,11 +1061,6 @@ fn projectile_left_sun(sample: ProjectileSample) -> bool {
 
 fn parse_numeric_input(input: &str) -> f32 {
     input.parse::<f32>().unwrap_or(0.0)
-}
-
-fn parse_angle_input(input: &str) -> f32 {
-    let angle = parse_numeric_input(input);
-    if angle > 360.0 { 0.0 } else { angle }
 }
 
 fn centered_col(text: &str) -> usize {
@@ -1645,7 +1642,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_resolves_gorilla_hits_to_nearest_target() {
+    fn probe_resolves_gorilla_hits_by_screen_half() {
         let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
         let gorillas = [
             Gorilla { x: 100.0, y: 100.0 },
@@ -1752,9 +1749,18 @@ mod tests {
     }
 
     #[test]
-    fn angle_input_above_360_resets_to_zero() {
-        assert_eq!(parse_angle_input("361"), 0.0);
-        assert_eq!(parse_angle_input("360"), 360.0);
+    fn angle_above_360_re_prompts_without_transitioning() {
+        let mut game = Game::new();
+        game.handle_char('3');
+        game.handle_char('6');
+        game.handle_char('1');
+        game.handle_submit();
+        assert_eq!(
+            game.turn_phase,
+            TurnPhase::EnterAngle {
+                input: String::new()
+            }
+        );
     }
 
     #[test]
