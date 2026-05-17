@@ -644,6 +644,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "cpal",
+ "crossbeam-channel",
  "pollster",
  "rand",
  "synthie",
