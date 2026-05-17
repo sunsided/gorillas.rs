@@ -33,6 +33,7 @@ const EXPLOSION_DURATION: f32 = 0.3;
 const EXPLOSION_MAX_RADIUS: f32 = 7.0;
 const GORILLA_EXPLOSION_DURATION: f32 = 0.6;
 const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
+const THROW_ARM_DURATION: f32 = 0.1;
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
 
@@ -106,7 +107,7 @@ const fn ega_component(value: u8, primary_bit: u8, secondary_bit: u8) -> u8 {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum GorillaArms {
     RightUp,
@@ -158,6 +159,13 @@ impl Game {
 
         if self.projectile.is_none() {
             return;
+        }
+
+        if let TurnPhase::ThrowingArm { timer, .. } = &mut self.turn_phase {
+            *timer -= dt;
+            if *timer <= 0.0 {
+                self.turn_phase = TurnPhase::ProjectileFlying;
+            }
         }
 
         {
@@ -290,9 +298,12 @@ impl Game {
                     angle,
                     velocity,
                 ));
-                self.turn_phase = TurnPhase::ProjectileFlying;
+                self.turn_phase = TurnPhase::ThrowingArm {
+                    player,
+                    timer: THROW_ARM_DURATION,
+                };
             }
-            TurnPhase::ProjectileFlying => {}
+            TurnPhase::ThrowingArm { .. } | TurnPhase::ProjectileFlying => {}
         }
     }
 
@@ -330,7 +341,7 @@ impl Game {
                 draw_text(canvas, 3, locate_col + 10, input, HUD_TEXT);
                 draw_text(canvas, 3, locate_col + 10 + input.len(), "_", HUD_TEXT);
             }
-            TurnPhase::ProjectileFlying => {}
+            TurnPhase::ThrowingArm { .. } | TurnPhase::ProjectileFlying => {}
         }
     }
 
@@ -344,7 +355,13 @@ impl Game {
             if self.explosion_hits_gorilla(index) {
                 continue;
             }
-            draw_gorilla(canvas, gorilla, GorillaArms::Down);
+            let arms = match self.turn_phase {
+                TurnPhase::ThrowingArm { player, .. } if player.index() == index => {
+                    throwing_arm_pose(player)
+                }
+                _ => GorillaArms::Down,
+            };
+            draw_gorilla(canvas, gorilla, arms);
         }
     }
 
@@ -400,7 +417,9 @@ impl Game {
         match &mut self.turn_phase {
             TurnPhase::EnterAngle { input } => input,
             TurnPhase::EnterVelocity { input, .. } => input,
-            TurnPhase::ProjectileFlying => unreachable!("no active input while projectile flies"),
+            TurnPhase::ThrowingArm { .. } | TurnPhase::ProjectileFlying => {
+                unreachable!("no active input while projectile flies")
+            }
         }
     }
 }
@@ -462,10 +481,18 @@ impl Player {
     }
 }
 
+fn throwing_arm_pose(player: Player) -> GorillaArms {
+    match player {
+        Player::One => GorillaArms::LeftUp,
+        Player::Two => GorillaArms::RightUp,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum TurnPhase {
     EnterAngle { input: String },
     EnterVelocity { angle_deg: f32, input: String },
+    ThrowingArm { player: Player, timer: f32 },
     ProjectileFlying,
 }
 
@@ -1813,7 +1840,13 @@ mod tests {
         game.handle_char('5');
         game.handle_char('0');
         game.handle_submit();
-        assert!(matches!(game.turn_phase, TurnPhase::ProjectileFlying));
+        assert!(matches!(
+            game.turn_phase,
+            TurnPhase::ThrowingArm {
+                player: Player::One,
+                ..
+            }
+        ));
         assert_eq!(game.projectile.unwrap().angle_degrees, 45.0);
         assert_eq!(game.projectile.unwrap().velocity, 50.0);
     }
@@ -1869,6 +1902,53 @@ mod tests {
             canvas.pixels[y * canvas.width as usize + left_prompt_x],
             None
         );
+    }
+
+    #[test]
+    fn launching_shot_enters_throwing_arm_phase() {
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::EnterVelocity {
+            angle_deg: 45.0,
+            input: String::from("50"),
+        };
+
+        game.handle_submit();
+
+        assert!(
+            matches!(
+                game.turn_phase,
+                TurnPhase::ThrowingArm {
+                    player: Player::One,
+                    ..
+                }
+            ),
+            "expected ThrowingArm for Player::One, got {:?}",
+            game.turn_phase
+        );
+    }
+
+    #[test]
+    fn throwing_arm_timer_expires_and_transitions_to_projectile_flying() {
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::EnterVelocity {
+            angle_deg: 45.0,
+            input: String::from("50"),
+        };
+        game.handle_submit();
+
+        game.update(THROW_ARM_DURATION + 0.05);
+
+        assert_eq!(game.turn_phase, TurnPhase::ProjectileFlying);
+    }
+
+    #[test]
+    fn player_one_throw_uses_left_arm() {
+        assert_eq!(throwing_arm_pose(Player::One), GorillaArms::LeftUp);
+    }
+
+    #[test]
+    fn player_two_throw_uses_right_arm() {
+        assert_eq!(throwing_arm_pose(Player::Two), GorillaArms::RightUp);
     }
 
     fn test_buildings() -> Vec<Building> {
