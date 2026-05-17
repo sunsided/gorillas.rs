@@ -321,12 +321,14 @@ impl Game {
             TurnPhase::EnterAngle { input } => {
                 draw_text(canvas, 2, locate_col, "Angle:", HUD_TEXT);
                 draw_text(canvas, 2, locate_col + 7, input, HUD_TEXT);
+                draw_text(canvas, 2, locate_col + 7 + input.len(), "_", HUD_TEXT);
             }
             TurnPhase::EnterVelocity { angle_deg, input } => {
                 draw_text(canvas, 2, locate_col, "Angle:", HUD_TEXT);
                 draw_text(canvas, 2, locate_col + 7, &format!("{angle_deg}"), HUD_TEXT);
                 draw_text(canvas, 3, locate_col, "Velocity:", HUD_TEXT);
                 draw_text(canvas, 3, locate_col + 10, input, HUD_TEXT);
+                draw_text(canvas, 3, locate_col + 10 + input.len(), "_", HUD_TEXT);
             }
             TurnPhase::ProjectileFlying => {}
         }
@@ -731,6 +733,26 @@ impl Canvas {
                 let dx = px as f32 - x;
                 let dy = (py as f32 - y) * BASIC_CIRCLE_Y_ASPECT;
                 if dx * dx + dy * dy <= radius_sq + 0.5 {
+                    self.pixel(px as f32, py as f32, color);
+                }
+            }
+        }
+    }
+
+    fn circle_ring(&mut self, x: f32, y: f32, radius: f32, color: [f32; 4]) {
+        let min_x = (x - radius - 1.0).floor() as i32;
+        let max_x = (x + radius + 1.0).ceil() as i32;
+        let min_y = (y - radius - 1.0).floor() as i32;
+        let max_y = (y + radius + 1.0).ceil() as i32;
+        let outer_sq = (radius + 0.5) * (radius + 0.5);
+        let inner_sq = (radius - 0.5).max(0.0) * (radius - 0.5).max(0.0);
+
+        for py in min_y..=max_y {
+            for px in min_x..=max_x {
+                let dx = px as f32 - x;
+                let dy = (py as f32 - y) * BASIC_CIRCLE_Y_ASPECT;
+                let dist_sq = dx * dx + dy * dy;
+                if dist_sq >= inner_sq && dist_sq <= outer_sq {
                     self.pixel(px as f32, py as f32, color);
                 }
             }
@@ -1176,6 +1198,7 @@ fn glyph_rows(ch: char) -> Option<[u8; 7]> {
         ':' => Some([0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0]),
         '.' => Some([0, 0, 0, 0, 0, 0b00100, 0b00100]),
         '-' => Some([0, 0, 0, 0b11111, 0, 0, 0]),
+        '_' => Some([0, 0, 0, 0, 0, 0, 0b11111]),
         '<' => Some([
             0b00010, 0b00100, 0b01000, 0b10000, 0b01000, 0b00100, 0b00010,
         ]),
@@ -1261,17 +1284,25 @@ fn draw_banana(canvas: &mut Canvas, x: f32, y: f32, rotation: BananaRotation) {
 
 fn draw_explosion(canvas: &mut Canvas, explosion: Explosion, gorillas: &[Gorilla; 2]) {
     let (x, y) = explosion.center(gorillas);
-    canvas.circle(x, y, explosion.radius(), 24, EXPLOSION);
-    if matches!(explosion.kind, ExplosionKind::Gorilla { .. }) {
-        let sweep_y = y + 6.0 - explosion.radius() * 0.5;
-        canvas.line(
-            x - 10.0,
-            sweep_y,
-            x + 10.0,
-            sweep_y,
-            EXPLOSION_MAX_RADIUS / 7.0,
-            EXPLOSION,
-        );
+    match explosion.kind {
+        ExplosionKind::Building { .. } => {
+            let progress = (explosion.elapsed / explosion.duration()).clamp(0.0, 1.0);
+            let ring_radius = (1.0 - (2.0 * progress - 1.0).abs()) * EXPLOSION_MAX_RADIUS;
+            canvas.circle_ring(x, y, ring_radius, EXPLOSION);
+        }
+        ExplosionKind::Gorilla { .. } => {
+            let r = explosion.radius();
+            canvas.circle(x, y, r, 24, EXPLOSION);
+            let sweep_y = y + 6.0 - r * 0.5;
+            canvas.line(
+                x - 10.0,
+                sweep_y,
+                x + 10.0,
+                sweep_y,
+                GORILLA_EXPLOSION_MAX_RADIUS / 24.0,
+                EXPLOSION,
+            );
+        }
     }
 }
 
