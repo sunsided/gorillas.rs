@@ -34,6 +34,8 @@ const EXPLOSION_MAX_RADIUS: f32 = 7.0;
 const GORILLA_EXPLOSION_DURATION: f32 = 0.6;
 const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
 const THROW_ARM_DURATION: f32 = 0.1;
+const VICTORY_DANCE_INTERVAL: f32 = 0.2;
+const VICTORY_DANCE_CYCLES: u8 = 8;
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
 
@@ -153,6 +155,28 @@ impl Game {
             if explosion.finished() {
                 let explosion = self.explosion.take().unwrap();
                 self.finish_explosion(explosion);
+            }
+            return;
+        }
+
+        if matches!(self.turn_phase, TurnPhase::VictoryDance { .. }) {
+            let done = if let TurnPhase::VictoryDance { cycle, timer, .. } = &mut self.turn_phase {
+                *timer -= dt;
+                if *timer <= 0.0 {
+                    *cycle += 1;
+                    *timer = VICTORY_DANCE_INTERVAL;
+                }
+                *cycle >= VICTORY_DANCE_CYCLES
+            } else {
+                unreachable!()
+            };
+            if done {
+                let (round, gorillas) = make_round(rand::random());
+                self.round = round;
+                self.gorillas = gorillas;
+                self.turn_phase = TurnPhase::EnterAngle {
+                    input: String::new(),
+                };
             }
             return;
         }
@@ -303,7 +327,9 @@ impl Game {
                     timer: THROW_ARM_DURATION,
                 };
             }
-            TurnPhase::ThrowingArm { .. } | TurnPhase::ProjectileFlying => {}
+            TurnPhase::ThrowingArm { .. }
+            | TurnPhase::VictoryDance { .. }
+            | TurnPhase::ProjectileFlying => {}
         }
     }
 
@@ -341,7 +367,9 @@ impl Game {
                 draw_text(canvas, 3, locate_col + 10, input, HUD_TEXT);
                 draw_text(canvas, 3, locate_col + 10 + input.len(), "_", HUD_TEXT);
             }
-            TurnPhase::ThrowingArm { .. } | TurnPhase::ProjectileFlying => {}
+            TurnPhase::ThrowingArm { .. }
+            | TurnPhase::VictoryDance { .. }
+            | TurnPhase::ProjectileFlying => {}
         }
     }
 
@@ -355,9 +383,25 @@ impl Game {
             if self.explosion_hits_gorilla(index) {
                 continue;
             }
+            if let TurnPhase::VictoryDance { loser_index, .. } = self.turn_phase
+                && index == loser_index
+            {
+                continue;
+            }
             let arms = match self.turn_phase {
                 TurnPhase::ThrowingArm { player, .. } if player.index() == index => {
                     throwing_arm_pose(player)
+                }
+                TurnPhase::VictoryDance {
+                    winner_index,
+                    cycle,
+                    ..
+                } if index == winner_index => {
+                    if cycle % 2 == 0 {
+                        GorillaArms::LeftUp
+                    } else {
+                        GorillaArms::RightUp
+                    }
                 }
                 _ => GorillaArms::Down,
             };
@@ -389,16 +433,16 @@ impl Game {
         match explosion.kind {
             ExplosionKind::Building { .. } => self.advance_turn(),
             ExplosionKind::Gorilla {
-                gorilla_index: _,
+                gorilla_index,
                 winner_index,
             } => {
                 self.scores[winner_index] += 1;
                 self.current_player = self.current_player.other();
-                let (round, gorillas) = make_round(rand::random());
-                self.round = round;
-                self.gorillas = gorillas;
-                self.turn_phase = TurnPhase::EnterAngle {
-                    input: String::new(),
+                self.turn_phase = TurnPhase::VictoryDance {
+                    winner_index,
+                    loser_index: gorilla_index,
+                    cycle: 0,
+                    timer: VICTORY_DANCE_INTERVAL,
                 };
             }
         }
@@ -417,7 +461,9 @@ impl Game {
         match &mut self.turn_phase {
             TurnPhase::EnterAngle { input } => input,
             TurnPhase::EnterVelocity { input, .. } => input,
-            TurnPhase::ThrowingArm { .. } | TurnPhase::ProjectileFlying => {
+            TurnPhase::ThrowingArm { .. }
+            | TurnPhase::VictoryDance { .. }
+            | TurnPhase::ProjectileFlying => {
                 unreachable!("no active input while projectile flies")
             }
         }
@@ -490,9 +536,23 @@ fn throwing_arm_pose(player: Player) -> GorillaArms {
 
 #[derive(Clone, Debug, PartialEq)]
 enum TurnPhase {
-    EnterAngle { input: String },
-    EnterVelocity { angle_deg: f32, input: String },
-    ThrowingArm { player: Player, timer: f32 },
+    EnterAngle {
+        input: String,
+    },
+    EnterVelocity {
+        angle_deg: f32,
+        input: String,
+    },
+    ThrowingArm {
+        player: Player,
+        timer: f32,
+    },
+    VictoryDance {
+        winner_index: usize,
+        loser_index: usize,
+        cycle: u8,
+        timer: f32,
+    },
     ProjectileFlying,
 }
 
@@ -1949,6 +2009,111 @@ mod tests {
     #[test]
     fn player_two_throw_uses_right_arm() {
         assert_eq!(throwing_arm_pose(Player::Two), GorillaArms::RightUp);
+    }
+
+    #[test]
+    fn gorilla_explosion_enters_victory_dance_phase() {
+        let mut game = Game::new();
+        game.explosion = Some(Explosion {
+            kind: ExplosionKind::Gorilla {
+                gorilla_index: 1,
+                winner_index: 0,
+            },
+            elapsed: GORILLA_EXPLOSION_DURATION,
+        });
+
+        game.update(PROJECTILE_TIME_STEP);
+
+        assert!(
+            matches!(
+                game.turn_phase,
+                TurnPhase::VictoryDance {
+                    winner_index: 0,
+                    loser_index: 1,
+                    cycle: 0,
+                    ..
+                }
+            ),
+            "expected VictoryDance, got {:?}",
+            game.turn_phase
+        );
+    }
+
+    #[test]
+    fn victory_dance_timer_cycles_through_arm_poses() {
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::VictoryDance {
+            winner_index: 0,
+            loser_index: 1,
+            cycle: 0,
+            timer: VICTORY_DANCE_INTERVAL,
+        };
+
+        game.update(VICTORY_DANCE_INTERVAL + 0.01);
+
+        assert!(
+            matches!(game.turn_phase, TurnPhase::VictoryDance { cycle: 1, .. }),
+            "expected cycle 1, got {:?}",
+            game.turn_phase
+        );
+    }
+
+    #[test]
+    fn victory_dance_completes_after_eight_cycles_and_resets_round() {
+        let mut game = Game::new();
+        let old_gorilla_x = game.gorillas[0].x;
+        game.turn_phase = TurnPhase::VictoryDance {
+            winner_index: 0,
+            loser_index: 1,
+            cycle: 7,
+            timer: VICTORY_DANCE_INTERVAL,
+        };
+
+        game.update(VICTORY_DANCE_INTERVAL + 0.01);
+
+        assert_eq!(
+            game.turn_phase,
+            TurnPhase::EnterAngle {
+                input: String::new()
+            }
+        );
+        // New round means gorillas are placed again (positions likely differ from seed)
+        // Just verify state reset, not exact position
+        let _ = old_gorilla_x;
+    }
+
+    #[test]
+    fn victory_dance_loser_gorilla_not_drawn() {
+        let mut game = Game::new();
+        game.round.buildings.clear();
+        game.gorillas = [
+            Gorilla { x: 100.0, y: 100.0 },
+            Gorilla { x: 500.0, y: 100.0 },
+        ];
+        game.turn_phase = TurnPhase::VictoryDance {
+            winner_index: 0,
+            loser_index: 1,
+            cycle: 0,
+            timer: VICTORY_DANCE_INTERVAL,
+        };
+
+        let mut canvas_dance = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        game.draw_scene(&mut canvas_dance, false);
+
+        // Render loser gorilla in isolation to find its pixel footprint
+        let mut canvas_loser = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        draw_gorilla(&mut canvas_loser, game.gorillas[1], GorillaArms::Down);
+
+        // Every pixel the loser would have drawn should be absent from the dance canvas
+        let any_loser_pixel_drawn = canvas_loser
+            .pixels
+            .iter()
+            .zip(canvas_dance.pixels.iter())
+            .any(|(loser, dance)| loser.is_some() && dance.is_some());
+        assert!(
+            !any_loser_pixel_drawn,
+            "loser gorilla pixels should not appear during VictoryDance"
+        );
     }
 
     fn test_buildings() -> Vec<Building> {
