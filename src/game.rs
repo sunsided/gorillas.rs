@@ -561,23 +561,102 @@ impl GameState {
 
     pub fn handle_char(&mut self, ch: char) {
         match self.screen {
-            AppScreen::ConfigMenu => {}
+            AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
         }
     }
 
     pub fn handle_backspace(&mut self) {
         match self.screen {
-            AppScreen::ConfigMenu => {}
+            AppScreen::ConfigMenu => {
+                self.field_input.pop();
+            }
             AppScreen::Playing => self.game.handle_backspace(),
         }
     }
 
     pub fn handle_submit(&mut self) {
         match self.screen {
-            AppScreen::ConfigMenu => {}
+            AppScreen::ConfigMenu => self.config_handle_submit(),
             AppScreen::Playing => self.game.handle_submit(),
         }
+    }
+
+    fn config_handle_char(&mut self, ch: char) {
+        match self.active_field {
+            ConfigField::PlayerOneName | ConfigField::PlayerTwoName => {
+                let code = ch as u32;
+                if (32..=126).contains(&code) && self.field_input.len() < 10 {
+                    self.field_input.push(ch);
+                }
+            }
+            ConfigField::TargetScore => {
+                if ch.is_ascii_digit() && self.field_input.len() < 2 {
+                    self.field_input.push(ch);
+                }
+            }
+            ConfigField::Gravity => {
+                if ch.is_ascii_digit() || (ch == '.' && !self.field_input.contains('.')) {
+                    self.field_input.push(ch);
+                }
+            }
+        }
+    }
+
+    fn config_handle_submit(&mut self) {
+        match self.active_field {
+            ConfigField::PlayerOneName => {
+                self.config.player_names[0] = if self.field_input.is_empty() {
+                    String::from("Player 1")
+                } else {
+                    self.field_input.clone()
+                };
+                self.field_input.clear();
+                self.active_field = ConfigField::PlayerTwoName;
+            }
+            ConfigField::PlayerTwoName => {
+                self.config.player_names[1] = if self.field_input.is_empty() {
+                    String::from("Player 2")
+                } else {
+                    self.field_input.clone()
+                };
+                self.field_input.clear();
+                self.active_field = ConfigField::TargetScore;
+            }
+            ConfigField::TargetScore => {
+                if self.field_input.is_empty() {
+                    self.active_field = ConfigField::Gravity;
+                } else {
+                    let score: u32 = self.field_input.parse().unwrap_or(0);
+                    if score >= 1 {
+                        self.config.target_score = score;
+                        self.field_input.clear();
+                        self.active_field = ConfigField::Gravity;
+                    } else {
+                        self.field_input.clear();
+                    }
+                }
+            }
+            ConfigField::Gravity => {
+                if self.field_input.is_empty() {
+                    self.apply_config_and_start();
+                } else {
+                    let grav: f32 = self.field_input.parse().unwrap_or(0.0);
+                    if grav > 0.0 {
+                        self.config.gravity = grav;
+                        self.apply_config_and_start();
+                    } else {
+                        self.field_input.clear();
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_config_and_start(&mut self) {
+        self.game.player_names = self.config.player_names.clone();
+        self.game.gravity = self.config.gravity;
+        self.screen = AppScreen::Playing;
     }
 }
 
@@ -2310,6 +2389,158 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    #[test]
+    fn config_name_field_accepts_printable_ascii() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        for ch in "Ab !".chars() {
+            state.handle_char(ch);
+        }
+        assert_eq!(state.field_input, "Ab !");
+    }
+
+    #[test]
+    fn config_name_field_rejects_non_printable() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        state.handle_char('\x1f');
+        state.handle_char('X');
+        assert_eq!(state.field_input, "X");
+    }
+
+    #[test]
+    fn config_name_field_caps_at_ten_chars() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        for ch in "ABCDEFGHIJK".chars() {
+            state.handle_char(ch);
+        }
+        assert_eq!(state.field_input.len(), 10);
+    }
+
+    #[test]
+    fn config_score_field_rejects_letters() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::TargetScore;
+        state.handle_char('a');
+        state.handle_char('3');
+        assert_eq!(state.field_input, "3");
+    }
+
+    #[test]
+    fn config_score_field_caps_at_two_digits() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::TargetScore;
+        for ch in "123".chars() {
+            state.handle_char(ch);
+        }
+        assert_eq!(state.field_input, "12");
+    }
+
+    #[test]
+    fn config_empty_name_submit_uses_default_and_advances() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        state.handle_submit();
+        assert_eq!(state.config.player_names[0], "Player 1");
+        assert_eq!(state.active_field, ConfigField::PlayerTwoName);
+        assert_eq!(state.field_input, "");
+    }
+
+    #[test]
+    fn config_name_submit_stores_input_and_advances() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        for ch in "Alice".chars() {
+            state.handle_char(ch);
+        }
+        state.handle_submit();
+        assert_eq!(state.config.player_names[0], "Alice");
+        assert_eq!(state.active_field, ConfigField::PlayerTwoName);
+    }
+
+    #[test]
+    fn config_score_zero_stays_on_same_field() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::TargetScore;
+        state.handle_char('0');
+        state.handle_submit();
+        assert_eq!(state.active_field, ConfigField::TargetScore);
+        assert_eq!(state.field_input, "");
+    }
+
+    #[test]
+    fn config_empty_score_uses_default_and_advances() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::TargetScore;
+        state.handle_submit();
+        assert_eq!(state.config.target_score, 3);
+        assert_eq!(state.active_field, ConfigField::Gravity);
+    }
+
+    #[test]
+    fn config_gravity_zero_stays_on_same_field() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::Gravity;
+        state.handle_char('0');
+        state.handle_submit();
+        assert_eq!(state.active_field, ConfigField::Gravity);
+        assert_eq!(state.field_input, "");
+    }
+
+    #[test]
+    fn config_empty_gravity_uses_default_and_enters_playing() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::Gravity;
+        state.handle_submit();
+        assert!((state.config.gravity - 9.8).abs() < 0.001);
+        assert_eq!(state.screen, AppScreen::Playing);
+    }
+
+    #[test]
+    fn config_apply_sets_gravity_on_game() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::Gravity;
+        state.config.gravity = 20.0;
+        state.handle_submit();
+        assert!((state.game.gravity - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn config_apply_sets_player_names_on_game() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.config.player_names[0] = String::from("Alice");
+        state.config.player_names[1] = String::from("Bob");
+        state.active_field = ConfigField::Gravity;
+        state.handle_submit();
+        assert_eq!(state.game.player_names[0], "Alice");
+        assert_eq!(state.game.player_names[1], "Bob");
+    }
+
+    #[test]
+    fn config_backspace_pops_last_char() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        state.active_field = ConfigField::PlayerOneName;
+        state.handle_char('A');
+        state.handle_char('B');
+        state.handle_backspace();
+        assert_eq!(state.field_input, "A");
     }
 
     #[test]
