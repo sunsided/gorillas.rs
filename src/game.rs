@@ -25,7 +25,6 @@ const WINDOW_VERTICAL_SPACING: f32 = 15.0;
 const WINDOW_HORIZONTAL_SPACING: f32 = 10.0;
 const BASIC_CIRCLE_Y_ASPECT: f32 = 1.0;
 const PROJECTILE_TIME_STEP: f32 = 0.1;
-#[cfg(test)]
 const MIN_THROW_VELOCITY: f32 = 2.0;
 const DEFAULT_GRAVITY: f32 = 9.8;
 const SUN_HEIGHT_LIMIT: f32 = 39.0;
@@ -737,6 +736,7 @@ impl Canvas {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn arc(
         &mut self,
         x: f32,
@@ -1825,9 +1825,9 @@ mod tests {
 
         game.draw_hud(&mut canvas);
 
-        let left_prompt_x = ((1 - 1) * TEXT_CELL_WIDTH as usize) + 1;
-        let right_prompt_x = ((66 - 1) * TEXT_CELL_WIDTH as usize) + 1;
-        let y = ((2 - 1) * TEXT_CELL_HEIGHT as usize) + 1;
+        let left_prompt_x = 1;
+        let right_prompt_x = (65 * TEXT_CELL_WIDTH as usize) + 1;
+        let y = TEXT_CELL_HEIGHT as usize + 1;
 
         assert_ne!(
             canvas.pixels[y * canvas.width as usize + right_prompt_x],
