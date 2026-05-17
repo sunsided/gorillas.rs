@@ -529,7 +529,7 @@ pub struct GameState {
 impl GameState {
     pub fn new() -> Self {
         Self {
-            screen: AppScreen::Playing,
+            screen: AppScreen::ConfigMenu,
             config: MatchConfig::default(),
             active_field: ConfigField::PlayerOneName,
             field_input: String::new(),
@@ -2461,6 +2461,35 @@ mod tests {
     }
 
     #[test]
+    fn game_state_new_starts_in_config_menu() {
+        let state = GameState::new();
+        assert!(matches!(state.screen, AppScreen::ConfigMenu));
+    }
+
+    #[test]
+    fn config_full_flow_through_defaults_enters_playing() {
+        let mut state = GameState::new();
+        assert!(matches!(state.screen, AppScreen::ConfigMenu));
+
+        state.handle_submit();
+        assert_eq!(state.active_field, ConfigField::PlayerTwoName);
+
+        state.handle_submit();
+        assert_eq!(state.active_field, ConfigField::TargetScore);
+
+        state.handle_submit();
+        assert_eq!(state.active_field, ConfigField::Gravity);
+
+        state.handle_submit();
+
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert_eq!(state.game.player_names[0], "Player 1");
+        assert_eq!(state.game.player_names[1], "Player 2");
+        assert_eq!(state.config.target_score, 3);
+        assert!((state.game.gravity - 9.8).abs() < 0.001);
+    }
+
+    #[test]
     fn config_screen_renders_player_one_prompt_on_canvas() {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
@@ -2640,9 +2669,10 @@ mod tests {
     }
 
     #[test]
-    fn game_state_new_starts_in_playing() {
+    fn game_state_new_starts_in_config_menu_not_playing() {
         let state = GameState::new();
-        assert!(matches!(state.screen, AppScreen::Playing));
+        assert!(matches!(state.screen, AppScreen::ConfigMenu));
+        assert!(matches!(state.active_field, ConfigField::PlayerOneName));
     }
 
     #[test]
