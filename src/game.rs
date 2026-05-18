@@ -734,7 +734,10 @@ impl GameState {
                 self.match_over_state = None;
                 self.screen = AppScreen::PlayAgain;
             }
-            AppScreen::PlayAgain => {}
+            AppScreen::PlayAgain => match ch {
+                'y' | 'Y' => self.reset_to_config(),
+                _ => {}
+            },
         }
     }
 
@@ -3107,5 +3110,27 @@ mod tests {
 
         assert_eq!(state.screen, AppScreen::PlayAgain);
         assert!(state.match_over_state.is_none());
+    }
+
+    #[test]
+    fn play_again_y_resets_to_config_menu() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::PlayAgain;
+
+        state.handle_char('y');
+
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
+        assert_eq!(state.active_field, ConfigField::PlayerOneName);
+        assert!(state.field_input.is_empty());
+    }
+
+    #[test]
+    fn play_again_upper_y_resets_to_config_menu() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::PlayAgain;
+
+        state.handle_char('Y');
+
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
     }
 }
