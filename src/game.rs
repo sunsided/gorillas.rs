@@ -42,7 +42,6 @@ const TEXT_CELL_HEIGHT: i32 = 14;
 #[derive(Debug)]
 pub struct GameUpdate {
     pub cues: Vec<crate::audio::SoundCue>,
-    #[allow(dead_code)] // read in GameState::update after Task 5
     pub match_over: Option<usize>,
 }
 
@@ -597,6 +596,13 @@ impl GameState {
             AppScreen::ConfigMenu | AppScreen::MatchOver => vec![],
             AppScreen::Playing => {
                 let update = self.game.update(dt);
+                if update.match_over.is_some() {
+                    self.match_over_state = Some(MatchOverState {
+                        scores: self.game.scores,
+                        names: self.game.player_names.clone(),
+                    });
+                    self.screen = AppScreen::MatchOver;
+                }
                 update.cues
             }
         }
@@ -2943,5 +2949,28 @@ mod tests {
         state.config.target_score = 5;
         state.apply_config_and_start();
         assert_eq!(state.game.target_score, 5);
+    }
+
+    #[test]
+    fn game_state_transitions_to_match_over_when_game_signals_it() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::Playing;
+        state.game.target_score = 1;
+        state.game.explosion = Some(Explosion {
+            kind: ExplosionKind::Gorilla {
+                gorilla_index: 1,
+                winner_index: 0,
+            },
+            elapsed: GORILLA_EXPLOSION_DURATION - 0.001,
+        });
+        state.game.player_names = [String::from("Alice"), String::from("Bob")];
+        state.game.scores = [0, 0];
+
+        let _ = state.update(0.1);
+
+        assert_eq!(state.screen, AppScreen::MatchOver);
+        let mo = state.match_over_state.as_ref().unwrap();
+        assert_eq!(mo.names[0], "Alice");
+        assert_eq!(mo.scores[0], 1);
     }
 }
