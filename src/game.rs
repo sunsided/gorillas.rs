@@ -771,7 +771,7 @@ impl GameState {
     fn config_handle_char(&mut self, ch: char) {
         match self.active_field {
             ConfigField::PlayerOneName | ConfigField::PlayerTwoName => {
-                if ch.is_ascii_alphanumeric() && self.field_input.len() < 10 {
+                if ch.is_ascii() && !ch.is_ascii_control() && self.field_input.len() < 10 {
                     self.field_input.push(ch);
                 }
             }
@@ -2710,10 +2710,32 @@ mod tests {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::PlayerOneName;
-        state.handle_char(' ');
-        state.handle_char('!');
+        state.handle_char('\x01');
         state.handle_char('X');
         assert_eq!(state.field_input, "X");
+    }
+
+    #[test]
+    fn config_player_name_accepts_spaces_and_punctuation() {
+        let mut state = GameState::new();
+
+        state.handle_char('A');
+        state.handle_char(' ');
+        state.handle_char('1');
+        state.handle_char('!');
+
+        assert_eq!(state.field_input, "A 1!");
+    }
+
+    #[test]
+    fn config_player_name_still_caps_at_10_chars() {
+        let mut state = GameState::new();
+
+        for _ in 0..12 {
+            state.handle_char('a');
+        }
+
+        assert_eq!(state.field_input.len(), 10);
     }
 
     #[test]
