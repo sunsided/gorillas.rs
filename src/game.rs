@@ -916,10 +916,7 @@ impl GameState {
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
                 if matches!(self.screen, AppScreen::Playing) {
-                    vec![
-                        crate::audio::SoundCue::Intro,
-                        crate::audio::SoundCue::GorillaIntro,
-                    ]
+                    vec![crate::audio::SoundCue::GorillaIntro]
                 } else {
                     vec![]
                 }
@@ -3181,7 +3178,7 @@ mod tests {
     }
 
     #[test]
-    fn game_state_handle_submit_emits_intro_cues_when_entering_playing() {
+    fn game_state_handle_submit_emits_gorilla_intro_cue_when_entering_playing() {
         use crate::audio::SoundCue;
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
@@ -3190,10 +3187,6 @@ mod tests {
         let _ = state.handle_submit(); // P2 name
         let _ = state.handle_submit(); // target score
         let cues = state.handle_submit(); // gravity -> starts game
-        assert!(
-            cues.contains(&SoundCue::Intro),
-            "expected Intro cue on game start, got {cues:?}"
-        );
         assert!(
             cues.contains(&SoundCue::GorillaIntro),
             "expected GorillaIntro cue on game start, got {cues:?}"
@@ -3489,6 +3482,25 @@ mod tests {
         assert!(
             !frame.vertices.is_empty(),
             "Intro frame must render text vertices"
+        );
+    }
+
+    #[test]
+    fn config_to_playing_only_emits_gorilla_intro_cue() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        let _ = state.handle_submit();
+        let _ = state.handle_submit();
+        let _ = state.handle_submit();
+        let cues = state.handle_submit();
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert!(
+            !cues.contains(&crate::audio::SoundCue::Intro),
+            "Intro cue must not fire here"
+        );
+        assert!(
+            cues.contains(&crate::audio::SoundCue::GorillaIntro),
+            "GorillaIntro cue must still fire"
         );
     }
 }
