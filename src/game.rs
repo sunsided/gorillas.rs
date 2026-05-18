@@ -136,6 +136,7 @@ pub struct Game {
     player_names: [String; 2],
     turn_phase: TurnPhase,
     gravity: f32,
+    target_score: u32,
 }
 
 impl Game {
@@ -155,6 +156,7 @@ impl Game {
                 input: String::new(),
             },
             gravity: DEFAULT_GRAVITY,
+            target_score: 3,
         }
     }
 
@@ -164,14 +166,12 @@ impl Game {
             explosion.advance(dt);
             if explosion.finished() {
                 let explosion = self.explosion.take().unwrap();
-                if matches!(explosion.kind, ExplosionKind::Gorilla { .. }) {
+                let is_gorilla = matches!(explosion.kind, ExplosionKind::Gorilla { .. });
+                let match_over = self.finish_explosion(explosion);
+                if is_gorilla && match_over.is_none() {
                     cues.push(crate::audio::SoundCue::VictoryDance);
                 }
-                self.finish_explosion(explosion);
-                return GameUpdate {
-                    cues,
-                    match_over: None,
-                };
+                return GameUpdate { cues, match_over };
             }
             return GameUpdate {
                 cues,
@@ -469,15 +469,21 @@ impl Game {
         )
     }
 
-    fn finish_explosion(&mut self, explosion: Explosion) {
+    fn finish_explosion(&mut self, explosion: Explosion) -> Option<usize> {
         self.sun_shocked = false;
         match explosion.kind {
-            ExplosionKind::Building { .. } => self.advance_turn(),
+            ExplosionKind::Building { .. } => {
+                self.advance_turn();
+                None
+            }
             ExplosionKind::Gorilla {
                 gorilla_index,
                 winner_index,
             } => {
                 self.scores[winner_index] += 1;
+                if self.scores[winner_index] >= self.target_score {
+                    return Some(winner_index);
+                }
                 self.current_player = self.current_player.other();
                 self.turn_phase = TurnPhase::VictoryDance {
                     winner_index,
@@ -485,6 +491,7 @@ impl Game {
                     cycle: 0,
                     timer: VICTORY_DANCE_INTERVAL,
                 };
+                None
             }
         }
     }
@@ -776,6 +783,7 @@ impl GameState {
     fn apply_config_and_start(&mut self) {
         self.game.player_names = self.config.player_names.clone();
         self.game.gravity = self.config.gravity;
+        self.game.target_score = self.config.target_score;
         self.screen = AppScreen::Playing;
     }
 }
@@ -1895,6 +1903,41 @@ mod tests {
     }
 
     #[test]
+    fn game_signals_match_over_when_winner_reaches_target_score() {
+        let mut game = Game::new();
+        game.target_score = 1;
+        game.explosion = Some(Explosion {
+            kind: ExplosionKind::Gorilla {
+                gorilla_index: 1,
+                winner_index: 0,
+            },
+            elapsed: GORILLA_EXPLOSION_DURATION - 0.001,
+        });
+
+        let update = game.update(0.1);
+
+        assert_eq!(update.match_over, Some(0));
+    }
+
+    #[test]
+    fn game_does_not_signal_match_over_before_target_score() {
+        let mut game = Game::new();
+        game.target_score = 3;
+        game.scores[0] = 1;
+        game.explosion = Some(Explosion {
+            kind: ExplosionKind::Gorilla {
+                gorilla_index: 1,
+                winner_index: 0,
+            },
+            elapsed: GORILLA_EXPLOSION_DURATION - 0.001,
+        });
+
+        let update = game.update(0.1);
+
+        assert_eq!(update.match_over, None);
+    }
+
+    #[test]
     fn seeded_cityscape_is_deterministic() {
         let first = make_cityscape_with_seed(1991);
         let second = make_cityscape_with_seed(1991);
@@ -2874,5 +2917,13 @@ mod tests {
             cues.contains(&SoundCue::GorillaIntro),
             "expected GorillaIntro cue on game start, got {cues:?}"
         );
+    }
+
+    #[test]
+    fn apply_config_wires_target_score_to_game() {
+        let mut state = GameState::new();
+        state.config.target_score = 5;
+        state.apply_config_and_start();
+        assert_eq!(state.game.target_score, 5);
     }
 }
