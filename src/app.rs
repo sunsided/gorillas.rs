@@ -134,6 +134,9 @@ impl ApplicationHandler for App {
                     }
                     _ => {}
                 }
+                if self.game.exit_requested {
+                    event_loop.exit();
+                }
             }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
