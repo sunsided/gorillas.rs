@@ -535,11 +535,18 @@ impl Default for MatchConfig {
     }
 }
 
+#[allow(dead_code)]
+struct MatchOverState {
+    scores: [u32; 2],
+    names: [String; 2],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum AppScreen {
     ConfigMenu,
     Playing,
+    MatchOver,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -570,6 +577,7 @@ pub struct GameState {
     active_field: ConfigField,
     field_input: String,
     game: Game,
+    match_over_state: Option<MatchOverState>,
 }
 
 impl GameState {
@@ -580,12 +588,13 @@ impl GameState {
             active_field: ConfigField::PlayerOneName,
             field_input: String::new(),
             game: Game::new(),
+            match_over_state: None,
         }
     }
 
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::ConfigMenu => vec![],
+            AppScreen::ConfigMenu | AppScreen::MatchOver => vec![],
             AppScreen::Playing => {
                 let update = self.game.update(dt);
                 update.cues
@@ -606,6 +615,12 @@ impl GameState {
                 }
             }
             AppScreen::Playing => self.game.frame(),
+            AppScreen::MatchOver => Frame {
+                logical_width: LOGICAL_WIDTH,
+                logical_height: LOGICAL_HEIGHT,
+                clear_color: BACKGROUND,
+                vertices: vec![],
+            },
         }
     }
 
@@ -681,6 +696,7 @@ impl GameState {
         match self.screen {
             AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
+            AppScreen::MatchOver => {}
         }
     }
 
@@ -690,6 +706,7 @@ impl GameState {
                 self.field_input.pop();
             }
             AppScreen::Playing => self.game.handle_backspace(),
+            AppScreen::MatchOver => {}
         }
     }
 
@@ -707,6 +724,7 @@ impl GameState {
                 }
             }
             AppScreen::Playing => self.game.handle_submit(),
+            AppScreen::MatchOver => vec![],
         }
     }
 
