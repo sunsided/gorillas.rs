@@ -37,6 +37,8 @@ const THROW_ARM_DURATION: f32 = 0.1;
 const VICTORY_DANCE_INTERVAL: f32 = 0.2;
 const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
+#[allow(dead_code)]
+const SPARKLE_FRAME_DURATION: f32 = 0.12;
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
 
@@ -595,7 +597,6 @@ pub struct GameState {
     sparkle_frame: u8,
     #[allow(dead_code)]
     sparkle_timer: f32,
-    #[allow(dead_code)]
     intro_cue_pending: bool,
 }
 
@@ -617,10 +618,15 @@ impl GameState {
 
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::Intro
-            | AppScreen::ConfigMenu
-            | AppScreen::MatchOver
-            | AppScreen::PlayAgain => vec![],
+            AppScreen::Intro => {
+                let mut cues = vec![];
+                if self.intro_cue_pending {
+                    cues.push(crate::audio::SoundCue::Intro);
+                    self.intro_cue_pending = false;
+                }
+                cues
+            }
+            AppScreen::ConfigMenu | AppScreen::MatchOver | AppScreen::PlayAgain => vec![],
             AppScreen::Playing => {
                 let update = self.game.update(dt);
                 if update.match_over.is_some() {
@@ -2705,6 +2711,27 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    #[test]
+    fn intro_cue_emitted_on_first_update() {
+        let mut state = GameState::new();
+        let cues = state.update(0.01);
+        assert!(
+            cues.contains(&crate::audio::SoundCue::Intro),
+            "first update should emit SoundCue::Intro"
+        );
+    }
+
+    #[test]
+    fn intro_cue_not_emitted_twice() {
+        let mut state = GameState::new();
+        let _ = state.update(0.01);
+        let cues = state.update(0.01);
+        assert!(
+            !cues.contains(&crate::audio::SoundCue::Intro),
+            "second update must not re-emit SoundCue::Intro"
+        );
     }
 
     #[test]
