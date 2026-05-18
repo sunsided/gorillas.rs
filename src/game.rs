@@ -557,6 +557,7 @@ struct MatchOverState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppScreen {
+    Intro,
     ConfigMenu,
     Playing,
     MatchOver,
@@ -590,24 +591,36 @@ pub struct GameState {
     field_input: String,
     game: Game,
     match_over_state: Option<MatchOverState>,
+    #[allow(dead_code)]
+    sparkle_frame: u8,
+    #[allow(dead_code)]
+    sparkle_timer: f32,
+    #[allow(dead_code)]
+    intro_cue_pending: bool,
 }
 
 impl GameState {
     pub fn new() -> Self {
         Self {
-            screen: AppScreen::ConfigMenu,
+            screen: AppScreen::Intro,
             exit_requested: false,
             config: MatchConfig::default(),
             active_field: ConfigField::PlayerOneName,
             field_input: String::new(),
             game: Game::new(),
             match_over_state: None,
+            sparkle_frame: 0,
+            sparkle_timer: 0.0,
+            intro_cue_pending: true,
         }
     }
 
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::ConfigMenu | AppScreen::MatchOver | AppScreen::PlayAgain => vec![],
+            AppScreen::Intro
+            | AppScreen::ConfigMenu
+            | AppScreen::MatchOver
+            | AppScreen::PlayAgain => vec![],
             AppScreen::Playing => {
                 let update = self.game.update(dt);
                 if update.match_over.is_some() {
@@ -624,6 +637,12 @@ impl GameState {
 
     pub fn frame(&self) -> Frame {
         match self.screen {
+            AppScreen::Intro => Frame {
+                logical_width: LOGICAL_WIDTH,
+                logical_height: LOGICAL_HEIGHT,
+                clear_color: BACKGROUND,
+                vertices: vec![],
+            },
             AppScreen::ConfigMenu => {
                 let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
                 self.render_config_screen(&mut canvas);
@@ -753,6 +772,7 @@ impl GameState {
 
     pub fn handle_char(&mut self, ch: char) {
         match self.screen {
+            AppScreen::Intro => {}
             AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
             AppScreen::MatchOver => {
@@ -769,6 +789,7 @@ impl GameState {
 
     pub fn handle_backspace(&mut self) {
         match self.screen {
+            AppScreen::Intro => {}
             AppScreen::ConfigMenu => {
                 self.field_input.pop();
             }
@@ -783,6 +804,7 @@ impl GameState {
 
     pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
         match self.screen {
+            AppScreen::Intro => vec![],
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
                 if matches!(self.screen, AppScreen::Playing) {
@@ -1767,6 +1789,8 @@ fn glyph_rows(ch: char) -> Option<[u8; 7]> {
         '>' => Some([
             0b01000, 0b00100, 0b00010, 0b00001, 0b00010, 0b00100, 0b01000,
         ]),
+        ',' => Some([0, 0, 0, 0, 0b00110, 0b00100, 0b01000]),
+        '*' => Some([0, 0b00100, 0b10101, 0b01110, 0b10101, 0b00100, 0]),
         _ => None,
     }
 }
@@ -2684,14 +2708,15 @@ mod tests {
     }
 
     #[test]
-    fn game_state_new_starts_in_config_menu() {
+    fn game_state_new_starts_in_intro() {
         let state = GameState::new();
-        assert!(matches!(state.screen, AppScreen::ConfigMenu));
+        assert!(matches!(state.screen, AppScreen::Intro));
     }
 
     #[test]
     fn config_full_flow_through_defaults_enters_playing() {
         let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
         assert!(matches!(state.screen, AppScreen::ConfigMenu));
 
         let _ = state.handle_submit();
@@ -2763,6 +2788,7 @@ mod tests {
     #[test]
     fn config_player_name_accepts_spaces_and_punctuation() {
         let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
 
         state.handle_char('A');
         state.handle_char(' ');
@@ -2775,6 +2801,7 @@ mod tests {
     #[test]
     fn config_player_name_still_caps_at_10_chars() {
         let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
 
         for _ in 0..12 {
             state.handle_char('a');
@@ -2915,9 +2942,8 @@ mod tests {
     }
 
     #[test]
-    fn game_state_new_starts_in_config_menu_not_playing() {
+    fn game_state_new_has_player_one_name_as_first_active_field() {
         let state = GameState::new();
-        assert!(matches!(state.screen, AppScreen::ConfigMenu));
         assert!(matches!(state.active_field, ConfigField::PlayerOneName));
     }
 
@@ -3029,6 +3055,7 @@ mod tests {
     fn game_state_handle_submit_emits_intro_cues_when_entering_playing() {
         use crate::audio::SoundCue;
         let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
         // Submit through all 4 config fields (defaults); last one triggers game start
         let _ = state.handle_submit(); // P1 name
         let _ = state.handle_submit(); // P2 name
@@ -3246,5 +3273,25 @@ mod tests {
                 input: String::new()
             }
         );
+    }
+
+    #[test]
+    fn comma_glyph_renders_at_bottom_rows() {
+        let rows = glyph_rows(',').expect("comma glyph should exist");
+        assert_eq!(rows[0], 0, "row 0 must be empty");
+        assert_eq!(rows[1], 0, "row 1 must be empty");
+        assert_eq!(rows[2], 0, "row 2 must be empty");
+        assert_eq!(rows[3], 0, "row 3 must be empty");
+        assert_ne!(rows[4], 0, "row 4 must have pixels");
+    }
+
+    #[test]
+    fn asterisk_glyph_renders_in_center_rows() {
+        let rows = glyph_rows('*').expect("asterisk glyph should exist");
+        assert_eq!(rows[0], 0, "row 0 must be empty");
+        assert_eq!(rows[6], 0, "row 6 must be empty");
+        assert_ne!(rows[1], 0, "row 1 must have pixels");
+        assert_ne!(rows[2], 0, "row 2 must have pixels");
+        assert_ne!(rows[3], 0, "row 3 must have pixels");
     }
 }
