@@ -543,6 +543,8 @@ pub enum AppScreen {
     ConfigMenu,
     Playing,
     MatchOver,
+    #[allow(dead_code)]
+    PlayAgain,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -566,6 +568,8 @@ impl ConfigField {
 
 pub struct GameState {
     pub screen: AppScreen,
+    #[allow(dead_code)]
+    pub exit_requested: bool,
     config: MatchConfig,
     active_field: ConfigField,
     field_input: String,
@@ -577,6 +581,7 @@ impl GameState {
     pub fn new() -> Self {
         Self {
             screen: AppScreen::ConfigMenu,
+            exit_requested: false,
             config: MatchConfig::default(),
             active_field: ConfigField::PlayerOneName,
             field_input: String::new(),
@@ -587,7 +592,7 @@ impl GameState {
 
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::ConfigMenu | AppScreen::MatchOver => vec![],
+            AppScreen::ConfigMenu | AppScreen::MatchOver | AppScreen::PlayAgain => vec![],
             AppScreen::Playing => {
                 let update = self.game.update(dt);
                 if update.match_over.is_some() {
@@ -644,6 +649,12 @@ impl GameState {
                     vertices: canvas.into_vertices(),
                 }
             }
+            AppScreen::PlayAgain => Frame {
+                logical_width: LOGICAL_WIDTH,
+                logical_height: LOGICAL_HEIGHT,
+                clear_color: BACKGROUND,
+                vertices: vec![],
+            },
         }
     }
 
@@ -720,6 +731,7 @@ impl GameState {
             AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
             AppScreen::MatchOver => self.reset_to_config(),
+            AppScreen::PlayAgain => {}
         }
     }
 
@@ -730,6 +742,7 @@ impl GameState {
             }
             AppScreen::Playing => self.game.handle_backspace(),
             AppScreen::MatchOver => self.reset_to_config(),
+            AppScreen::PlayAgain => {}
         }
     }
 
@@ -751,6 +764,7 @@ impl GameState {
                 self.reset_to_config();
                 vec![]
             }
+            AppScreen::PlayAgain => vec![],
         }
     }
 
