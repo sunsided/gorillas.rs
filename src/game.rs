@@ -534,7 +534,6 @@ impl Default for MatchConfig {
     }
 }
 
-#[allow(dead_code)]
 struct MatchOverState {
     scores: [u32; 2],
     names: [String; 2],
@@ -621,12 +620,35 @@ impl GameState {
                 }
             }
             AppScreen::Playing => self.game.frame(),
-            AppScreen::MatchOver => Frame {
-                logical_width: LOGICAL_WIDTH,
-                logical_height: LOGICAL_HEIGHT,
-                clear_color: BACKGROUND,
-                vertices: vec![],
-            },
+            AppScreen::MatchOver => {
+                let mo = self.match_over_state.as_ref().unwrap();
+                let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                draw_text(
+                    &mut canvas,
+                    8,
+                    centered_col("GAME OVER!"),
+                    "GAME OVER!",
+                    HUD_TEXT,
+                );
+                draw_text(&mut canvas, 10, centered_col("Score:"), "Score:", HUD_TEXT);
+                draw_text(&mut canvas, 11, 30, &mo.names[0], HUD_TEXT);
+                draw_text(&mut canvas, 11, 50, &format!("{}", mo.scores[0]), HUD_TEXT);
+                draw_text(&mut canvas, 12, 30, &mo.names[1], HUD_TEXT);
+                draw_text(&mut canvas, 12, 50, &format!("{}", mo.scores[1]), HUD_TEXT);
+                draw_text(
+                    &mut canvas,
+                    24,
+                    centered_col("Press any key to continue"),
+                    "Press any key to continue",
+                    HUD_TEXT,
+                );
+                Frame {
+                    logical_width: LOGICAL_WIDTH,
+                    logical_height: LOGICAL_HEIGHT,
+                    clear_color: BACKGROUND,
+                    vertices: canvas.into_vertices(),
+                }
+            }
         }
     }
 
@@ -2972,5 +2994,22 @@ mod tests {
         let mo = state.match_over_state.as_ref().unwrap();
         assert_eq!(mo.names[0], "Alice");
         assert_eq!(mo.scores[0], 1);
+    }
+
+    #[test]
+    fn match_over_frame_has_vertices() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::MatchOver;
+        state.match_over_state = Some(MatchOverState {
+            scores: [3, 1],
+            names: [String::from("Alice"), String::from("Bob")],
+        });
+
+        let frame = state.frame();
+
+        assert!(
+            !frame.vertices.is_empty(),
+            "MatchOver frame rendered no vertices"
+        );
     }
 }
