@@ -543,7 +543,6 @@ pub enum AppScreen {
     ConfigMenu,
     Playing,
     MatchOver,
-    #[allow(dead_code)]
     PlayAgain,
 }
 
@@ -568,7 +567,6 @@ impl ConfigField {
 
 pub struct GameState {
     pub screen: AppScreen,
-    #[allow(dead_code)]
     pub exit_requested: bool,
     config: MatchConfig,
     active_field: ConfigField,
@@ -736,6 +734,7 @@ impl GameState {
             }
             AppScreen::PlayAgain => match ch {
                 'y' | 'Y' => self.reset_to_config(),
+                'n' | 'N' => self.exit_requested = true,
                 _ => {}
             },
         }
@@ -3132,5 +3131,36 @@ mod tests {
         state.handle_char('Y');
 
         assert_eq!(state.screen, AppScreen::ConfigMenu);
+    }
+
+    #[test]
+    fn play_again_n_sets_exit_requested() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::PlayAgain;
+
+        state.handle_char('n');
+
+        assert!(state.exit_requested);
+    }
+
+    #[test]
+    fn play_again_upper_n_sets_exit_requested() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::PlayAgain;
+
+        state.handle_char('N');
+
+        assert!(state.exit_requested);
+    }
+
+    #[test]
+    fn play_again_other_keys_ignored() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::PlayAgain;
+
+        state.handle_char('x');
+
+        assert_eq!(state.screen, AppScreen::PlayAgain);
+        assert!(!state.exit_requested);
     }
 }
