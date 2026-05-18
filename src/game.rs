@@ -787,9 +787,9 @@ impl GameState {
         }
     }
 
-    #[allow(dead_code)]
     fn reset_to_config(&mut self) {
         self.screen = AppScreen::ConfigMenu;
+        self.exit_requested = false;
         self.config = MatchConfig::default();
         self.active_field = ConfigField::PlayerOneName;
         self.field_input.clear();
