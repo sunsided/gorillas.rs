@@ -36,6 +36,7 @@ const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
 const THROW_ARM_DURATION: f32 = 0.1;
 const VICTORY_DANCE_INTERVAL: f32 = 0.2;
 const VICTORY_DANCE_CYCLES: u8 = 8;
+const INTER_ROUND_DELAY: f32 = 1.0;
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
 
@@ -190,6 +191,19 @@ impl Game {
                 unreachable!()
             };
             if done {
+                self.turn_phase = TurnPhase::InterRound {
+                    timer: INTER_ROUND_DELAY,
+                };
+            }
+            return GameUpdate {
+                cues,
+                match_over: None,
+            };
+        }
+
+        if let TurnPhase::InterRound { timer } = &mut self.turn_phase {
+            *timer -= dt;
+            if *timer <= 0.0 {
                 let (round, gorillas) = make_round(rand::random());
                 self.round = round;
                 self.gorillas = gorillas;
@@ -368,6 +382,7 @@ impl Game {
             }
             TurnPhase::ThrowingArm { .. }
             | TurnPhase::VictoryDance { .. }
+            | TurnPhase::InterRound { .. }
             | TurnPhase::ProjectileFlying => {}
         }
         cues
@@ -409,6 +424,7 @@ impl Game {
             }
             TurnPhase::ThrowingArm { .. }
             | TurnPhase::VictoryDance { .. }
+            | TurnPhase::InterRound { .. }
             | TurnPhase::ProjectileFlying => {}
         }
     }
@@ -510,6 +526,7 @@ impl Game {
             TurnPhase::EnterVelocity { input, .. } => input,
             TurnPhase::ThrowingArm { .. }
             | TurnPhase::VictoryDance { .. }
+            | TurnPhase::InterRound { .. }
             | TurnPhase::ProjectileFlying => {
                 unreachable!("no active input while projectile flies")
             }
@@ -956,6 +973,9 @@ enum TurnPhase {
         winner_index: usize,
         loser_index: usize,
         cycle: u8,
+        timer: f32,
+    },
+    InterRound {
         timer: f32,
     },
     ProjectileFlying,
@@ -2557,9 +2577,8 @@ mod tests {
     }
 
     #[test]
-    fn victory_dance_completes_after_eight_cycles_and_resets_round() {
+    fn victory_dance_completes_after_eight_cycles_and_enters_inter_round() {
         let mut game = Game::new();
-        let old_gorilla_x = game.gorillas[0].x;
         game.turn_phase = TurnPhase::VictoryDance {
             winner_index: 0,
             loser_index: 1,
@@ -2571,13 +2590,10 @@ mod tests {
 
         assert_eq!(
             game.turn_phase,
-            TurnPhase::EnterAngle {
-                input: String::new()
+            TurnPhase::InterRound {
+                timer: INTER_ROUND_DELAY,
             }
         );
-        // New round means gorillas are placed again (positions likely differ from seed)
-        // Just verify state reset, not exact position
-        let _ = old_gorilla_x;
     }
 
     #[test]
@@ -3184,6 +3200,51 @@ mod tests {
         assert!(
             !frame.vertices.is_empty(),
             "PlayAgain frame should render text vertices"
+        );
+    }
+
+    #[test]
+    fn victory_dance_transitions_to_inter_round_when_complete() {
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::VictoryDance {
+            winner_index: 0,
+            loser_index: 1,
+            cycle: 7,
+            timer: VICTORY_DANCE_INTERVAL,
+        };
+
+        let _ = game.update(VICTORY_DANCE_INTERVAL + 0.01);
+
+        assert_eq!(
+            game.turn_phase,
+            TurnPhase::InterRound {
+                timer: INTER_ROUND_DELAY
+            }
+        );
+    }
+
+    #[test]
+    fn inter_round_timer_counts_down() {
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::InterRound { timer: 1.0 };
+
+        let _ = game.update(0.5);
+
+        assert_eq!(game.turn_phase, TurnPhase::InterRound { timer: 0.5 });
+    }
+
+    #[test]
+    fn inter_round_expires_and_starts_new_round() {
+        let mut game = Game::new();
+        game.turn_phase = TurnPhase::InterRound { timer: 0.1 };
+
+        let _ = game.update(0.2);
+
+        assert_eq!(
+            game.turn_phase,
+            TurnPhase::EnterAngle {
+                input: String::new()
+            }
         );
     }
 }
