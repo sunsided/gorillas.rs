@@ -1754,9 +1754,11 @@ fn draw_char(canvas: &mut Canvas, x: i32, y: i32, ch: char, color: [f32; 4]) {
         for col_index in 0..5 {
             if (bits >> (4 - col_index)) & 1 == 1 {
                 let px = x + col_index;
-                let py = y + row_index as i32 * 2;
+                let py = y + (row_index as i32 * 2).max(1);
                 canvas.pixel(px as f32, py as f32, color);
-                canvas.pixel(px as f32, (py + 1) as f32, color);
+                if row_index > 0 && row_index < 6 {
+                    canvas.pixel(px as f32, (py + 1) as f32, color);
+                }
             }
         }
     }
