@@ -724,7 +724,7 @@ impl GameState {
         match self.screen {
             AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
-            AppScreen::MatchOver => {}
+            AppScreen::MatchOver => self.reset_to_config(),
         }
     }
 
@@ -734,7 +734,7 @@ impl GameState {
                 self.field_input.pop();
             }
             AppScreen::Playing => self.game.handle_backspace(),
-            AppScreen::MatchOver => {}
+            AppScreen::MatchOver => self.reset_to_config(),
         }
     }
 
@@ -752,8 +752,20 @@ impl GameState {
                 }
             }
             AppScreen::Playing => self.game.handle_submit(),
-            AppScreen::MatchOver => vec![],
+            AppScreen::MatchOver => {
+                self.reset_to_config();
+                vec![]
+            }
         }
+    }
+
+    fn reset_to_config(&mut self) {
+        self.screen = AppScreen::ConfigMenu;
+        self.config = MatchConfig::default();
+        self.active_field = ConfigField::PlayerOneName;
+        self.field_input.clear();
+        self.game = Game::new();
+        self.match_over_state = None;
     }
 
     fn config_handle_char(&mut self, ch: char) {
@@ -3011,5 +3023,50 @@ mod tests {
             !frame.vertices.is_empty(),
             "MatchOver frame rendered no vertices"
         );
+    }
+
+    #[test]
+    fn match_over_any_char_resets_to_config_menu() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::MatchOver;
+        state.match_over_state = Some(MatchOverState {
+            scores: [3, 1],
+            names: [String::from("Alice"), String::from("Bob")],
+        });
+
+        state.handle_char('x');
+
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
+        assert!(state.match_over_state.is_none());
+        assert_eq!(state.active_field, ConfigField::PlayerOneName);
+        assert!(state.field_input.is_empty());
+    }
+
+    #[test]
+    fn match_over_enter_resets_to_config_menu() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::MatchOver;
+        state.match_over_state = Some(MatchOverState {
+            scores: [3, 1],
+            names: [String::from("Alice"), String::from("Bob")],
+        });
+
+        let _ = state.handle_submit();
+
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
+    }
+
+    #[test]
+    fn match_over_backspace_resets_to_config_menu() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::MatchOver;
+        state.match_over_state = Some(MatchOverState {
+            scores: [3, 1],
+            names: [String::from("Alice"), String::from("Bob")],
+        });
+
+        state.handle_backspace();
+
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
     }
 }
