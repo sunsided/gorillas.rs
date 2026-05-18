@@ -780,7 +780,9 @@ impl GameState {
 
     pub fn handle_char(&mut self, ch: char) {
         match self.screen {
-            AppScreen::Intro => {}
+            AppScreen::Intro => {
+                self.screen = AppScreen::ConfigMenu;
+            }
             AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
             AppScreen::MatchOver => {
@@ -797,7 +799,9 @@ impl GameState {
 
     pub fn handle_backspace(&mut self) {
         match self.screen {
-            AppScreen::Intro => {}
+            AppScreen::Intro => {
+                self.screen = AppScreen::ConfigMenu;
+            }
             AppScreen::ConfigMenu => {
                 self.field_input.pop();
             }
@@ -812,7 +816,10 @@ impl GameState {
 
     pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
         match self.screen {
-            AppScreen::Intro => vec![],
+            AppScreen::Intro => {
+                self.screen = AppScreen::ConfigMenu;
+                vec![]
+            }
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
                 if matches!(self.screen, AppScreen::Playing) {
@@ -3347,5 +3354,35 @@ mod tests {
         let _ = state.update(SPARKLE_FRAME_DURATION + 0.01);
 
         assert_eq!(state.sparkle_frame, 0);
+    }
+
+    #[test]
+    fn any_char_transitions_intro_to_config_menu() {
+        let mut state = GameState::new();
+        state.handle_char('x');
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
+    }
+
+    #[test]
+    fn backspace_transitions_intro_to_config_menu() {
+        let mut state = GameState::new();
+        state.handle_backspace();
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
+    }
+
+    #[test]
+    fn submit_transitions_intro_to_config_menu() {
+        let mut state = GameState::new();
+        let cues = state.handle_submit();
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
+        assert!(cues.is_empty());
+    }
+
+    #[test]
+    fn reset_to_config_does_not_return_to_intro() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::Playing;
+        state.reset_to_config();
+        assert_eq!(state.screen, AppScreen::ConfigMenu);
     }
 }
