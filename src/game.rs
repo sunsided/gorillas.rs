@@ -730,7 +730,10 @@ impl GameState {
         match self.screen {
             AppScreen::ConfigMenu => self.config_handle_char(ch),
             AppScreen::Playing => self.game.handle_char(ch),
-            AppScreen::MatchOver => self.reset_to_config(),
+            AppScreen::MatchOver => {
+                self.match_over_state = None;
+                self.screen = AppScreen::PlayAgain;
+            }
             AppScreen::PlayAgain => {}
         }
     }
@@ -741,7 +744,10 @@ impl GameState {
                 self.field_input.pop();
             }
             AppScreen::Playing => self.game.handle_backspace(),
-            AppScreen::MatchOver => self.reset_to_config(),
+            AppScreen::MatchOver => {
+                self.match_over_state = None;
+                self.screen = AppScreen::PlayAgain;
+            }
             AppScreen::PlayAgain => {}
         }
     }
@@ -761,13 +767,15 @@ impl GameState {
             }
             AppScreen::Playing => self.game.handle_submit(),
             AppScreen::MatchOver => {
-                self.reset_to_config();
+                self.match_over_state = None;
+                self.screen = AppScreen::PlayAgain;
                 vec![]
             }
             AppScreen::PlayAgain => vec![],
         }
     }
 
+    #[allow(dead_code)]
     fn reset_to_config(&mut self) {
         self.screen = AppScreen::ConfigMenu;
         self.config = MatchConfig::default();
@@ -3057,7 +3065,7 @@ mod tests {
     }
 
     #[test]
-    fn match_over_any_char_resets_to_config_menu() {
+    fn match_over_any_char_transitions_to_play_again() {
         let mut state = GameState::new();
         state.screen = AppScreen::MatchOver;
         state.match_over_state = Some(MatchOverState {
@@ -3067,14 +3075,12 @@ mod tests {
 
         state.handle_char('x');
 
-        assert_eq!(state.screen, AppScreen::ConfigMenu);
+        assert_eq!(state.screen, AppScreen::PlayAgain);
         assert!(state.match_over_state.is_none());
-        assert_eq!(state.active_field, ConfigField::PlayerOneName);
-        assert!(state.field_input.is_empty());
     }
 
     #[test]
-    fn match_over_enter_resets_to_config_menu() {
+    fn match_over_enter_transitions_to_play_again() {
         let mut state = GameState::new();
         state.screen = AppScreen::MatchOver;
         state.match_over_state = Some(MatchOverState {
@@ -3084,11 +3090,12 @@ mod tests {
 
         let _ = state.handle_submit();
 
-        assert_eq!(state.screen, AppScreen::ConfigMenu);
+        assert_eq!(state.screen, AppScreen::PlayAgain);
+        assert!(state.match_over_state.is_none());
     }
 
     #[test]
-    fn match_over_backspace_resets_to_config_menu() {
+    fn match_over_backspace_transitions_to_play_again() {
         let mut state = GameState::new();
         state.screen = AppScreen::MatchOver;
         state.match_over_state = Some(MatchOverState {
@@ -3098,6 +3105,7 @@ mod tests {
 
         state.handle_backspace();
 
-        assert_eq!(state.screen, AppScreen::ConfigMenu);
+        assert_eq!(state.screen, AppScreen::PlayAgain);
+        assert!(state.match_over_state.is_none());
     }
 }
