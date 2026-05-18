@@ -517,7 +517,6 @@ impl Game {
     }
 }
 
-#[allow(dead_code)]
 pub struct MatchConfig {
     pub player_names: [String; 2],
     pub target_score: u32,
@@ -540,7 +539,6 @@ struct MatchOverState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum AppScreen {
     ConfigMenu,
     Playing,
@@ -548,7 +546,6 @@ pub enum AppScreen {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 enum ConfigField {
     PlayerOneName,
     PlayerTwoName,
@@ -557,7 +554,6 @@ enum ConfigField {
 }
 
 impl ConfigField {
-    #[allow(dead_code)]
     fn index(self) -> usize {
         match self {
             Self::PlayerOneName => 0,
@@ -568,7 +564,6 @@ impl ConfigField {
     }
 }
 
-#[allow(dead_code)]
 pub struct GameState {
     pub screen: AppScreen,
     config: MatchConfig,
