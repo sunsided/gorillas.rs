@@ -59,7 +59,7 @@ pub struct GameState {
 `PlayAgain` renders a single line centered at row 11, matching BASIC `LOCATE 11, 24`:
 
 ```
-Would you like to play again (Y or N)?
+Would you like to play again?
 ```
 
 No scores or other content on this screen.
