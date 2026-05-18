@@ -37,7 +37,6 @@ const THROW_ARM_DURATION: f32 = 0.1;
 const VICTORY_DANCE_INTERVAL: f32 = 0.2;
 const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
-#[allow(dead_code)]
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
@@ -593,9 +592,7 @@ pub struct GameState {
     field_input: String,
     game: Game,
     match_over_state: Option<MatchOverState>,
-    #[allow(dead_code)]
     sparkle_frame: u8,
-    #[allow(dead_code)]
     sparkle_timer: f32,
     intro_cue_pending: bool,
 }
@@ -623,6 +620,11 @@ impl GameState {
                 if self.intro_cue_pending {
                     cues.push(crate::audio::SoundCue::Intro);
                     self.intro_cue_pending = false;
+                }
+                self.sparkle_timer += dt;
+                if self.sparkle_timer >= SPARKLE_FRAME_DURATION {
+                    self.sparkle_frame = (self.sparkle_frame + 1) % 5;
+                    self.sparkle_timer = 0.0;
                 }
                 cues
             }
@@ -3320,5 +3322,30 @@ mod tests {
         assert_ne!(rows[1], 0, "row 1 must have pixels");
         assert_ne!(rows[2], 0, "row 2 must have pixels");
         assert_ne!(rows[3], 0, "row 3 must have pixels");
+    }
+
+    #[test]
+    fn sparkle_frame_advances_after_duration() {
+        let mut state = GameState::new();
+        state.intro_cue_pending = false;
+        state.sparkle_frame = 0;
+        state.sparkle_timer = 0.0;
+
+        let _ = state.update(SPARKLE_FRAME_DURATION + 0.01);
+
+        assert_eq!(state.sparkle_frame, 1);
+        assert!(state.sparkle_timer < SPARKLE_FRAME_DURATION);
+    }
+
+    #[test]
+    fn sparkle_frame_wraps_at_five() {
+        let mut state = GameState::new();
+        state.intro_cue_pending = false;
+        state.sparkle_frame = 4;
+        state.sparkle_timer = 0.0;
+
+        let _ = state.update(SPARKLE_FRAME_DURATION + 0.01);
+
+        assert_eq!(state.sparkle_frame, 0);
     }
 }
