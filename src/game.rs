@@ -38,6 +38,7 @@ const VICTORY_DANCE_INTERVAL: f32 = 0.2;
 const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
+const SPARKLE_COLOR: [f32; 4] = palette_attribute(4);
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
 
@@ -645,12 +646,16 @@ impl GameState {
 
     pub fn frame(&self) -> Frame {
         match self.screen {
-            AppScreen::Intro => Frame {
-                logical_width: LOGICAL_WIDTH,
-                logical_height: LOGICAL_HEIGHT,
-                clear_color: BACKGROUND,
-                vertices: vec![],
-            },
+            AppScreen::Intro => {
+                let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                self.render_intro_screen(&mut canvas);
+                Frame {
+                    logical_width: LOGICAL_WIDTH,
+                    logical_height: LOGICAL_HEIGHT,
+                    clear_color: BACKGROUND,
+                    vertices: canvas.into_vertices(),
+                }
+            }
             AppScreen::ConfigMenu => {
                 let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
                 self.render_config_screen(&mut canvas);
@@ -775,6 +780,94 @@ impl GameState {
         if active == 3 {
             draw_text(canvas, 14, 54, &self.field_input, HUD_TEXT);
             draw_text(canvas, 14, 54 + self.field_input.len(), "_", HUD_TEXT);
+        }
+    }
+
+    fn render_intro_screen(&self, canvas: &mut Canvas) {
+        draw_text(
+            canvas,
+            4,
+            centered_col("Q B a s i c    G O R I L L A S"),
+            "Q B a s i c    G O R I L L A S",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            6,
+            centered_col("Copyright (C) IBM Corporation 1991"),
+            "Copyright (C) IBM Corporation 1991",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            7,
+            centered_col("Copyright (C) Markus Mayer 2026"),
+            "Copyright (C) Markus Mayer 2026",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            9,
+            centered_col("Your mission is to hit your opponent with the exploding"),
+            "Your mission is to hit your opponent with the exploding",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            10,
+            centered_col("banana by varying the angle and power of your throw, taking"),
+            "banana by varying the angle and power of your throw, taking",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            11,
+            centered_col("into account wind speed, gravity, and the city skyline."),
+            "into account wind speed, gravity, and the city skyline.",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            12,
+            centered_col("The wind speed is shown by a directional arrow at the bottom"),
+            "The wind speed is shown by a directional arrow at the bottom",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            13,
+            centered_col("of the playing field, its length relative to its strength."),
+            "of the playing field, its length relative to its strength.",
+            HUD_TEXT,
+        );
+        draw_text(
+            canvas,
+            24,
+            centered_col("Press any key to continue"),
+            "Press any key to continue",
+            HUD_TEXT,
+        );
+
+        let frame = self.sparkle_frame as usize;
+
+        // Row 1 (top): * at column c (0-based) where (frame + c) % 5 == 0
+        for c in 0..80usize {
+            if (frame + c).is_multiple_of(5) {
+                draw_text(canvas, 1, c + 1, "*", SPARKLE_COLOR);
+            }
+        }
+        // Row 22 (bottom): * at column c where (c - frame + 8) % 5 == 0
+        for c in 0..80usize {
+            if (c + 8 - frame).is_multiple_of(5) {
+                draw_text(canvas, 22, c + 1, "*", SPARKLE_COLOR);
+            }
+        }
+        // Columns 1 (left) and 80 (right), rows 2-21 (1-indexed)
+        for r in 2..=21usize {
+            if (frame + r) % 5 == 1 {
+                draw_text(canvas, r, 80, "*", SPARKLE_COLOR);
+                draw_text(canvas, 23 - r, 1, "*", SPARKLE_COLOR);
+            }
         }
     }
 
@@ -3384,5 +3477,18 @@ mod tests {
         state.screen = AppScreen::Playing;
         state.reset_to_config();
         assert_eq!(state.screen, AppScreen::ConfigMenu);
+    }
+
+    #[test]
+    fn intro_frame_has_vertices() {
+        let mut state = GameState::new();
+        state.sparkle_frame = 0;
+
+        let frame = state.frame();
+
+        assert!(
+            !frame.vertices.is_empty(),
+            "Intro frame must render text vertices"
+        );
     }
 }
