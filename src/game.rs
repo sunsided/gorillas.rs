@@ -647,12 +647,22 @@ impl GameState {
                     vertices: canvas.into_vertices(),
                 }
             }
-            AppScreen::PlayAgain => Frame {
-                logical_width: LOGICAL_WIDTH,
-                logical_height: LOGICAL_HEIGHT,
-                clear_color: BACKGROUND,
-                vertices: vec![],
-            },
+            AppScreen::PlayAgain => {
+                let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                draw_text(
+                    &mut canvas,
+                    11,
+                    24,
+                    "Would you like to play again?",
+                    HUD_TEXT,
+                );
+                Frame {
+                    logical_width: LOGICAL_WIDTH,
+                    logical_height: LOGICAL_HEIGHT,
+                    clear_color: BACKGROUND,
+                    vertices: canvas.into_vertices(),
+                }
+            }
         }
     }
 
@@ -3162,5 +3172,18 @@ mod tests {
 
         assert_eq!(state.screen, AppScreen::PlayAgain);
         assert!(!state.exit_requested);
+    }
+
+    #[test]
+    fn play_again_frame_has_vertices() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::PlayAgain;
+
+        let frame = state.frame();
+
+        assert!(
+            !frame.vertices.is_empty(),
+            "PlayAgain frame should render text vertices"
+        );
     }
 }
