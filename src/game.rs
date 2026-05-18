@@ -39,6 +39,13 @@ const VICTORY_DANCE_CYCLES: u8 = 8;
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
 
+#[derive(Debug)]
+pub struct GameUpdate {
+    pub cues: Vec<crate::audio::SoundCue>,
+    #[allow(dead_code)] // read in GameState::update after Task 5
+    pub match_over: Option<usize>,
+}
+
 const fn palette_attribute(attribute: u8) -> [f32; 4] {
     let [red, green, blue] = palette_attribute_rgb(attribute);
     [
@@ -151,7 +158,7 @@ impl Game {
         }
     }
 
-    pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
+    pub fn update(&mut self, dt: f32) -> GameUpdate {
         let mut cues = Vec::new();
         if let Some(explosion) = self.explosion.as_mut() {
             explosion.advance(dt);
@@ -161,8 +168,15 @@ impl Game {
                     cues.push(crate::audio::SoundCue::VictoryDance);
                 }
                 self.finish_explosion(explosion);
+                return GameUpdate {
+                    cues,
+                    match_over: None,
+                };
             }
-            return cues;
+            return GameUpdate {
+                cues,
+                match_over: None,
+            };
         }
 
         if matches!(self.turn_phase, TurnPhase::VictoryDance { .. }) {
@@ -184,11 +198,17 @@ impl Game {
                     input: String::new(),
                 };
             }
-            return cues;
+            return GameUpdate {
+                cues,
+                match_over: None,
+            };
         }
 
         if self.projectile.is_none() {
-            return cues;
+            return GameUpdate {
+                cues,
+                match_over: None,
+            };
         }
 
         if let TurnPhase::ThrowingArm { timer, .. } = &mut self.turn_phase {
@@ -207,7 +227,10 @@ impl Game {
         let sample = projectile.sample(self.round.wind, self.gravity);
         if !sample.on_screen {
             self.advance_turn();
-            return cues;
+            return GameUpdate {
+                cues,
+                match_over: None,
+            };
         }
 
         let collision_canvas = self.collision_canvas();
@@ -245,7 +268,10 @@ impl Game {
                 self.sun_shocked = false;
             }
         }
-        cues
+        GameUpdate {
+            cues,
+            match_over: None,
+        }
     }
 
     pub fn frame(&self) -> Frame {
@@ -553,7 +579,10 @@ impl GameState {
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
             AppScreen::ConfigMenu => vec![],
-            AppScreen::Playing => self.game.update(dt),
+            AppScreen::Playing => {
+                let update = self.game.update(dt);
+                update.cues
+            }
         }
     }
 
@@ -1858,6 +1887,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn game_update_returns_game_update_struct() {
+        let mut game = Game::new();
+        let update = game.update(0.016);
+        assert_eq!(update.match_over, None);
+        let _ = update.cues;
+    }
+
+    #[test]
     fn seeded_cityscape_is_deterministic() {
         let first = make_cityscape_with_seed(1991);
         let second = make_cityscape_with_seed(1991);
@@ -2762,10 +2799,9 @@ mod tests {
 
     #[test]
     fn game_update_returns_vec_of_sound_cues() {
-        use crate::audio::SoundCue;
         let mut game = Game::new();
-        let cues: Vec<SoundCue> = game.update(0.016);
-        assert!(cues.is_empty()); // no cues when idle
+        let update = game.update(0.016);
+        assert!(update.cues.is_empty()); // no cues when idle
     }
 
     #[test]
@@ -2813,10 +2849,11 @@ mod tests {
             },
             elapsed: GORILLA_EXPLOSION_DURATION,
         });
-        let cues = game.update(PROJECTILE_TIME_STEP);
+        let update = game.update(PROJECTILE_TIME_STEP);
         assert!(
-            cues.contains(&SoundCue::VictoryDance),
-            "expected VictoryDance cue, got {cues:?}"
+            update.cues.contains(&SoundCue::VictoryDance),
+            "expected VictoryDance cue, got {:?}",
+            update.cues
         );
     }
 
