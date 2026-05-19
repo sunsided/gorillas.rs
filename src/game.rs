@@ -39,11 +39,8 @@ const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
 const GORILLA_INTRO_PHRASE_DUR_S: f32 = 2.944_444;
-#[allow(dead_code)]
 const GORILLA_INTRO_X1: f32 = 265.0;
-#[allow(dead_code)]
 const GORILLA_INTRO_X2: f32 = 325.0;
-#[allow(dead_code)]
 const GORILLA_INTRO_Y: f32 = 290.0;
 const SPARKLE_COLOR: [f32; 4] = palette_attribute(4);
 const TEXT_CELL_WIDTH: i32 = 8;
@@ -146,7 +143,6 @@ enum GorillaIntroPhase {
 #[derive(Debug)]
 struct GorillaIntroState {
     phase: GorillaIntroPhase,
-    #[allow(dead_code)]
     player_names: [String; 2],
     sound_pending: bool,
 }
@@ -727,12 +723,17 @@ impl GameState {
                     vertices: canvas.into_vertices(),
                 }
             }
-            AppScreen::GorillaIntro => Frame {
-                logical_width: LOGICAL_WIDTH,
-                logical_height: LOGICAL_HEIGHT,
-                clear_color: BACKGROUND,
-                vertices: vec![],
-            },
+            AppScreen::GorillaIntro => {
+                let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+                let state = self.gorilla_intro.as_ref().unwrap();
+                self.render_gorilla_intro_screen(state, &mut canvas);
+                Frame {
+                    logical_width: LOGICAL_WIDTH,
+                    logical_height: LOGICAL_HEIGHT,
+                    clear_color: BACKGROUND,
+                    vertices: canvas.into_vertices(),
+                }
+            }
             AppScreen::Playing => self.game.frame(),
             AppScreen::MatchOver => {
                 let mo = self.match_over_state.as_ref().unwrap();
@@ -934,6 +935,57 @@ impl GameState {
             if (frame + r) % 5 == 1 {
                 draw_text(canvas, r, 80, "*", SPARKLE_COLOR);
                 draw_text(canvas, 23 - r, 1, "*", SPARKLE_COLOR);
+            }
+        }
+    }
+
+    fn render_gorilla_intro_screen(&self, state: &GorillaIntroState, canvas: &mut Canvas) {
+        match &state.phase {
+            GorillaIntroPhase::ChoiceMenu => {
+                draw_text(
+                    canvas,
+                    10,
+                    centered_col("V = View Intro"),
+                    "V = View Intro",
+                    HUD_TEXT,
+                );
+                draw_text(
+                    canvas,
+                    12,
+                    centered_col("P = Play Game"),
+                    "P = Play Game",
+                    HUD_TEXT,
+                );
+                draw_text(
+                    canvas,
+                    14,
+                    centered_col("Your Choice?"),
+                    "Your Choice?",
+                    HUD_TEXT,
+                );
+            }
+            GorillaIntroPhase::Animation { arm, .. } => {
+                let title = "Q B A S I C   G O R I L L A S";
+                draw_text(canvas, 3, centered_col(title), title, HUD_TEXT);
+                draw_text(canvas, 5, centered_col("STARRING:"), "STARRING:", HUD_TEXT);
+                let starring = format!("{}  AND  {}", state.player_names[0], state.player_names[1]);
+                draw_text(canvas, 6, centered_col(&starring), &starring, HUD_TEXT);
+                draw_gorilla(
+                    canvas,
+                    Gorilla {
+                        x: GORILLA_INTRO_X1,
+                        y: GORILLA_INTRO_Y,
+                    },
+                    *arm,
+                );
+                draw_gorilla(
+                    canvas,
+                    Gorilla {
+                        x: GORILLA_INTRO_X2,
+                        y: GORILLA_INTRO_Y,
+                    },
+                    *arm,
+                );
             }
         }
     }
@@ -3788,5 +3840,26 @@ mod tests {
         assert!(!gi.sound_pending);
         assert_eq!(gi.player_names[0], "Player 1");
         assert_eq!(gi.player_names[1], "Player 2");
+    }
+
+    #[test]
+    fn gorilla_intro_choice_menu_frame_has_vertices() {
+        let state = advance_state_to_gorilla_intro();
+        let frame = state.frame();
+        assert!(
+            !frame.vertices.is_empty(),
+            "GorillaIntro choice menu should render vertices"
+        );
+    }
+
+    #[test]
+    fn gorilla_intro_animation_frame_has_vertices() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('v');
+        let frame = state.frame();
+        assert!(
+            !frame.vertices.is_empty(),
+            "GorillaIntro animation should render vertices"
+        );
     }
 }
