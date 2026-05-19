@@ -1,30 +1,53 @@
+//! Audio scheduling layer. Translates [`SoundCue`] values into timestamped MIDI events
+//! and feeds them to the [`synthie`] synthesizer at the correct wall-clock time.
+//!
+//! Every note table is transcribed from a QBasic `PLAY` string in GORILLAS.BAS;
+//! each constant's doc comment cites the originating line.
+
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use synthie::params::AudioEvent;
 
+/// A named sound effect, each corresponding to a QBasic `PLAY` statement in GORILLAS.BAS.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundCue {
+    /// Title-screen melody. GORILLAS.BAS line 696: `PLAY "MBT160O1L8CDEDCDL4ECC"`.
     Intro,
+    /// Four-phrase animation music played during the gorilla intro screen.
+    /// GORILLAS.BAS lines 645-661 (`GorillaIntro` sub).
     GorillaIntro,
+    /// Banana-throw sound. GORILLAS.BAS line 937: `PLAY "MBo0L32A-L64CL16BL64A+"`.
     Throw,
+    /// Explosion when the banana hits a building.
+    /// GORILLAS.BAS line 274: `PLAY "MBO0L32EFGEFDC"`.
     BuildingExplosion,
+    /// Explosion when a gorilla takes a direct hit.
+    /// GORILLAS.BAS line 482: `PLAY "MBO0L16EFGEFDC"`.
     GorillaExplosion,
+    /// Victory dance melody, played eight times after a hit.
+    /// GORILLAS.BAS line 1144: `PLAY "MFO0L32EFGEFDC"`.
     VictoryDance,
 }
 
+/// Wall-clock audio scheduler. Converts [`SoundCue`]s into timestamped MIDI events
+/// and drains them on each [`tick`](AudioScheduler::tick) call.
 #[allow(dead_code)]
 pub(crate) struct AudioScheduler {
+    /// Keeps the audio output stream alive for the lifetime of the scheduler.
     _stream: cpal::Stream,
+    /// Channel to the synthie audio thread.
     tx: crossbeam_channel::Sender<AudioEvent>,
+    /// Pending `(fire_time, event)` pairs, drained in [`tick`](AudioScheduler::tick).
     queue: Vec<(Instant, AudioEvent)>,
 }
 
 // Each entry: (start_us from cue start, MIDI note, note duration µs)
 // NoteOff fires at start_us + dur_us - 10_000
 
-// MBT160O1L8CDEDCDL4ECC  — T160, O1 (base=48)
+/// Note table for [`SoundCue::Intro`].
+/// GORILLAS.BAS line 696: `PLAY "MBT160O1L8CDEDCDL4ECC"` — T160, O1 (base=48).
 const INTRO_NOTES: [(u64, u8, u64); 9] = [
     (0, 48, 187_500),         // C L8
     (187_500, 50, 187_500),   // D
@@ -37,7 +60,8 @@ const INTRO_NOTES: [(u64, u8, u64); 9] = [
     (1_875_000, 48, 375_000), // C
 ];
 
-// MBo0L32A-L64CL16BL64A+  — T120, O0 (base=36)
+/// Note table for [`SoundCue::Throw`].
+/// GORILLAS.BAS line 937: `PLAY "MBo0L32A-L64CL16BL64A+"` — T120, O0 (base=36).
 const THROW_NOTES: [(u64, u8, u64); 4] = [
     (0, 44, 62_500),       // A-flat L32
     (62_500, 36, 31_250),  // C L64
@@ -45,7 +69,8 @@ const THROW_NOTES: [(u64, u8, u64); 4] = [
     (218_750, 46, 31_250), // A-sharp L64
 ];
 
-// MBO0L32EFGEFDC  — T120, O0 (base=36), all L32
+/// Note table for [`SoundCue::BuildingExplosion`].
+/// GORILLAS.BAS line 274: `PLAY "MBO0L32EFGEFDC"` — T120, O0 (base=36), all L32.
 const BUILDING_EXPLOSION_NOTES: [(u64, u8, u64); 7] = [
     (0, 40, 62_500),       // E
     (62_500, 41, 62_500),  // F
@@ -56,7 +81,8 @@ const BUILDING_EXPLOSION_NOTES: [(u64, u8, u64); 7] = [
     (375_000, 36, 62_500), // C
 ];
 
-// MBO0L16EFGEFDC  — T120, O0 (base=36), all L16
+/// Note table for [`SoundCue::GorillaExplosion`].
+/// GORILLAS.BAS line 482: `PLAY "MBO0L16EFGEFDC"` — T120, O0 (base=36), all L16.
 const GORILLA_EXPLOSION_NOTES: [(u64, u8, u64); 7] = [
     (0, 40, 125_000),
     (125_000, 41, 125_000),
@@ -67,16 +93,15 @@ const GORILLA_EXPLOSION_NOTES: [(u64, u8, u64); 7] = [
     (750_000, 36, 125_000),
 ];
 
-// MFO0L32EFGEFDC x8  — same pitches as building, 8 repetitions
+/// One repetition of the victory dance melody; same pitches as [`BUILDING_EXPLOSION_NOTES`].
+/// GORILLAS.BAS line 1144: `PLAY "MFO0L32EFGEFDC"` — used eight times in [`SoundCue::VictoryDance`].
 const VICTORY_DANCE_UNIT: [(u64, u8, u64); 7] = BUILDING_EXPLOSION_NOTES;
+/// Duration of one victory dance repetition in microseconds (7 × 62_500 µs).
 const VICTORY_UNIT_DUR_US: u64 = 437_500; // 7 × 62_500
 
-// GorillaIntro: 4 phrases from:
-//   t120o1l16 b9n0baan0bn0bn0baaan0b9n0baan0b
-//   o2l16     e-9n0e-d-d-n0e-n0e-n0e-d-d-d-n0e-9n0e-d-d-n0e-
-//   o2l16     g-9n0g-een0g-n0g-n0g-eeen0g-9n0g-een0g-
-//   o2l16     b9n0baan0g-n0g-n0g-eeen0o1b9n0baan0b
-// Shared timing template (15 notes per phrase, rests omitted):
+/// Shared note-slot timing template for all four [`SoundCue::GorillaIntro`] phrases.
+/// 15 slots per phrase; rests are omitted. Each entry is `(start_us, duration_us)`.
+/// GORILLAS.BAS lines 645-661 (`GorillaIntro` sub).
 const GORILLA_INTRO_TIMING: [(u64, u64); 15] = [
     (0, 222_222),       // L9
     (347_222, 125_000), // L16
@@ -94,13 +119,15 @@ const GORILLA_INTRO_TIMING: [(u64, u64); 15] = [
     (2_569_444, 125_000),
     (2_819_444, 125_000),
 ];
+/// Total duration of one gorilla intro phrase in microseconds.
 const GORILLA_INTRO_PHRASE_DUR_US: u64 = 2_944_444;
 
-// MIDI notes for each phrase (15 per phrase):
-// P1 O1: B B A A B B B A A A B B A A B
-// P2 O2: Eb Eb Db Db Eb Eb Eb Db Db Db Eb Eb Db Db Eb
-// P3 O2: Gb Gb E E Gb Gb Gb E E E Gb Gb E E Gb
-// P4 O2->O1: B2 B2 A2 A2 Gb Gb Gb E E E B1 B1 A1 A1 B1
+/// MIDI note numbers for each of the four gorilla intro phrases (15 notes each).
+/// GORILLAS.BAS lines 645-661 (`GorillaIntro` sub):
+/// - P1 O1: B B A A B B B A A A B B A A B
+/// - P2 O2: Eb Eb Db Db Eb Eb Eb Db Db Db Eb Eb Db Db Eb
+/// - P3 O2: Gb Gb E E Gb Gb Gb E E E Gb Gb E E Gb
+/// - P4 O2-O1: B2 B2 A2 A2 Gb Gb Gb E E E B1 B1 A1 A1 B1
 const GORILLA_INTRO_PHRASES: [[u8; 15]; 4] = [
     [59, 59, 57, 57, 59, 59, 59, 57, 57, 57, 59, 59, 57, 57, 59],
     [63, 63, 61, 61, 63, 63, 63, 61, 61, 61, 63, 63, 61, 61, 63],
@@ -108,6 +135,8 @@ const GORILLA_INTRO_PHRASES: [[u8; 15]; 4] = [
     [71, 71, 69, 69, 66, 66, 66, 64, 64, 64, 59, 59, 57, 57, 59],
 ];
 
+/// Converts a [`SoundCue`] into a list of `(fire_time, AudioEvent)` pairs
+/// relative to `start`, ready to be appended to the scheduler queue.
 #[allow(dead_code)]
 pub(crate) fn cue_to_events(cue: SoundCue, start: Instant) -> Vec<(Instant, AudioEvent)> {
     use synthie::params::MidiNote;
@@ -164,6 +193,7 @@ pub(crate) fn cue_to_events(cue: SoundCue, start: Instant) -> Vec<(Instant, Audi
 
 #[allow(dead_code)]
 impl AudioScheduler {
+    /// Creates the audio output stream and loads the "PWM Lead" synthesizer patch.
     pub(crate) fn new() -> Result<Self> {
         use synthie::prelude::setup_audio;
         use synthie::presets::sid::default_patches;
@@ -183,6 +213,7 @@ impl AudioScheduler {
         })
     }
 
+    /// Cancels any in-flight cue, clears the queue, and starts playing `cue` immediately.
     pub(crate) fn play(&mut self, cue: SoundCue) {
         let _ = self.tx.send(AudioEvent::Panic);
         self.queue.clear();
@@ -190,6 +221,8 @@ impl AudioScheduler {
         self.queue.extend(events);
     }
 
+    /// Dispatches all queued events whose scheduled fire time has elapsed.
+    /// Call once per frame from the render loop.
     pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         let mut i = 0;
@@ -203,6 +236,8 @@ impl AudioScheduler {
         }
     }
 
+    /// Appends `cue` to start 10 ms after the last pending event,
+    /// or immediately if the queue is empty.
     pub(crate) fn enqueue_after(&mut self, cue: SoundCue) {
         let start = self
             .queue

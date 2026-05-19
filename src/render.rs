@@ -1,3 +1,9 @@
+//! wgpu-based renderer. Consumes a [`Frame`] produced by the game logic and presents it
+//! to the OS window, with letterboxing/pillarboxing to preserve the original 640×350 aspect ratio.
+//!
+//! The only primitive is a colored triangle; everything the game draws goes through
+//! [`PrimitiveBatch`] which converts axis-aligned rectangles into triangle pairs.
+
 use std::{
     borrow::Cow,
     fs, io,
@@ -8,18 +14,28 @@ use std::{
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
+/// One rendered frame: a clear color plus a list of colored triangle vertices.
+/// Produced by [`game::GameState::frame`] and consumed by [`Renderer::render`].
 #[derive(Debug)]
 pub struct Frame {
+    /// Logical pixel width of the game canvas (640).
     pub logical_width: u32,
+    /// Logical pixel height of the game canvas (350).
     pub logical_height: u32,
+    /// Color used to clear the surface before drawing vertices.
     pub clear_color: [f32; 4],
+    /// Flat triangle list; every three entries form one triangle.
     pub vertices: Vec<Vertex>,
 }
 
+/// A single GPU vertex: clip-space position and linear sRGB color.
+/// `repr(C)` + [`bytemuck::Pod`] so it can be cast directly into a wgpu vertex buffer.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
+    /// NDC position: `(-1, -1)` = bottom-left, `(1, 1)` = top-right.
     position: [f32; 2],
+    /// RGBA color in the game's logical color space (sRGB values, not pre-linearised).
     color: [f32; 4],
 }
 
@@ -27,6 +43,7 @@ impl Vertex {
     const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
         wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
 
+    /// Returns the wgpu vertex buffer layout descriptor for this type.
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
@@ -35,16 +52,22 @@ impl Vertex {
         }
     }
 
+    /// Returns a copy of this vertex with the color replaced.
     fn with_color(self, color: [f32; 4]) -> Self {
         Self { color, ..self }
     }
 }
 
+/// Error returned from [`Renderer::new`] when the GPU setup fails.
 #[derive(Debug)]
 pub enum RendererInitError {
+    /// wgpu surface creation failed (e.g. the window handle is unsupported).
     Surface(wgpu::CreateSurfaceError),
+    /// No suitable GPU adapter was found.
     Adapter(wgpu::RequestAdapterError),
+    /// GPU device/queue creation failed.
     Device(wgpu::RequestDeviceError),
+    /// The surface exposes no texture formats the renderer can use.
     SurfaceFormatUnavailable,
 }
 
@@ -61,12 +84,18 @@ impl std::fmt::Display for RendererInitError {
 
 impl std::error::Error for RendererInitError {}
 
+/// Error returned from [`Renderer::render_with_screenshot`] when the frame capture fails.
 #[derive(Debug)]
 pub enum ScreenshotError {
+    /// The surface was not created with `COPY_SRC` usage, so readback is impossible.
     SurfaceCopyUnsupported,
+    /// The surface format is not RGBA8 or BGRA8; pixel swizzling is undefined.
     UnsupportedTextureFormat(wgpu::TextureFormat),
+    /// Mapping the readback buffer failed.
     BufferMap(wgpu::BufferAsyncError),
+    /// GPU polling after the buffer map failed.
     Poll(wgpu::PollError),
+    /// Writing the PPM file to disk failed.
     Io(io::Error),
 }
 
@@ -92,22 +121,34 @@ impl From<io::Error> for ScreenshotError {
     }
 }
 
+/// wgpu renderer. Owns the surface, device, queue, and pipeline.
 pub struct Renderer {
+    /// The window surface frames are presented to.
     surface: wgpu::Surface<'static>,
+    /// GPU logical device used to create resources and encode commands.
     device: wgpu::Device,
+    /// Command queue; submits encoded command buffers.
     queue: wgpu::Queue,
+    /// Current surface configuration (format, size, present mode).
     config: wgpu::SurfaceConfiguration,
+    /// The single render pipeline: colored triangles with no depth test.
     render_pipeline: wgpu::RenderPipeline,
 }
 
+/// Outcome of a [`Renderer::render`] call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RenderOutcome {
+    /// Frame was submitted and presented successfully.
     Presented,
+    /// The surface is out of date; call [`Renderer::resize`] before the next frame.
     NeedsReconfigure,
+    /// Frame was skipped (e.g. occluded or validation error); no action needed.
     Skipped,
 }
 
 impl Renderer {
+    /// Initialises the wgpu surface, picks a suitable adapter and device,
+    /// and creates the render pipeline. Prefers low-power adapters and sRGB surface formats.
     pub async fn new(window: Arc<Window>) -> Result<Self, RendererInitError> {
         let size = window.inner_size();
         let instance = wgpu::Instance::default();
@@ -162,6 +203,8 @@ impl Renderer {
         })
     }
 
+    /// Updates the surface configuration when the window is resized.
+    /// Zero-sized surfaces are ignored (window is minimised).
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width == 0 || size.height == 0 {
             return;
@@ -172,10 +215,13 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Renders `frame` to the surface without capturing a screenshot.
     pub fn render(&mut self, frame: &Frame) -> RenderOutcome {
         self.render_inner(frame, None).0
     }
 
+    /// Renders `frame` and additionally saves a PPM screenshot to `path`.
+    /// Screenshot capture is best-effort; failure is reported in the returned `Option`.
     pub fn render_with_screenshot(
         &mut self,
         frame: &Frame,
@@ -185,6 +231,8 @@ impl Renderer {
         self.render_inner(frame, Some(&path))
     }
 
+    /// Core render path shared by [`render`](Renderer::render) and
+    /// [`render_with_screenshot`](Renderer::render_with_screenshot).
     fn render_inner(
         &mut self,
         frame: &Frame,
@@ -276,6 +324,8 @@ impl Renderer {
         (RenderOutcome::Presented, screenshot)
     }
 
+    /// Encodes a texture-to-buffer copy command and returns the readback descriptor.
+    /// Fails immediately if the surface does not have `COPY_SRC` usage.
     fn encode_screenshot_copy(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -336,6 +386,7 @@ impl Renderer {
         })
     }
 
+    /// Maps the readback buffer, converts pixels to RGB, and writes a binary PPM file.
     fn write_screenshot(
         &self,
         readback: ScreenshotReadback,
@@ -367,6 +418,8 @@ impl Renderer {
     }
 }
 
+/// Converts a game color to the correct space for the clear-color API call.
+/// wgpu clear colors are always linear on sRGB surfaces.
 fn surface_color(color: [f32; 4], surface_is_srgb: bool) -> [f32; 4] {
     if surface_is_srgb {
         linearize_rgba(color)
@@ -375,6 +428,7 @@ fn surface_color(color: [f32; 4], surface_is_srgb: bool) -> [f32; 4] {
     }
 }
 
+/// Linearises vertex colors for sRGB surfaces, or borrows them unchanged for non-sRGB.
 fn surface_vertices<'a>(vertices: &'a [Vertex], surface_is_srgb: bool) -> Cow<'a, [Vertex]> {
     if !surface_is_srgb {
         return Cow::Borrowed(vertices);
@@ -389,6 +443,7 @@ fn surface_vertices<'a>(vertices: &'a [Vertex], surface_is_srgb: bool) -> Cow<'a
     )
 }
 
+/// Converts an sRGB RGBA color to linear light, preserving alpha.
 fn linearize_rgba(color: [f32; 4]) -> [f32; 4] {
     [
         srgb_channel_to_linear(color[0]),
@@ -398,6 +453,7 @@ fn linearize_rgba(color: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// Applies the IEC 61966-2-1 sRGB transfer function inverse to one channel.
 fn srgb_channel_to_linear(channel: f32) -> f32 {
     if channel <= 0.04045 {
         channel / 12.92
@@ -406,15 +462,23 @@ fn srgb_channel_to_linear(channel: f32) -> f32 {
     }
 }
 
+/// Carries the GPU buffer and layout information needed to retrieve and decode a screenshot.
 struct ScreenshotReadback {
+    /// GPU buffer mapped for CPU read after the copy completes.
     buffer: wgpu::Buffer,
+    /// Image width in pixels.
     width: u32,
+    /// Image height in pixels.
     height: u32,
+    /// Row stride including wgpu alignment padding.
     padded_bytes_per_row: u32,
+    /// Actual pixel data bytes per row (width × bytes-per-pixel).
     unpadded_bytes_per_row: u32,
+    /// Surface texture format, used to determine byte swizzle order.
     format: wgpu::TextureFormat,
 }
 
+/// Builds a [`wgpu::SurfaceConfiguration`] from the given parameters.
 fn surface_config(
     size: PhysicalSize<u32>,
     format: wgpu::TextureFormat,
@@ -434,6 +498,8 @@ fn surface_config(
     }
 }
 
+/// Requests `RENDER_ATTACHMENT | COPY_SRC` if supported, otherwise falls back to
+/// `RENDER_ATTACHMENT` only (which disables screenshot capture).
 fn surface_usage(supported: wgpu::TextureUsages) -> wgpu::TextureUsages {
     let desired = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
     if supported.contains(desired) {
@@ -443,18 +509,26 @@ fn surface_usage(supported: wgpu::TextureUsages) -> wgpu::TextureUsages {
     }
 }
 
+/// Rounds `value` up to the next multiple of `alignment`.
 fn align_to(value: u32, alignment: u32) -> u32 {
     value.div_ceil(alignment) * alignment
 }
 
+/// A letterboxed/pillarboxed viewport rectangle within the physical surface.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RenderViewport {
+    /// Left edge in physical pixels.
     x: f32,
+    /// Top edge in physical pixels.
     y: f32,
+    /// Viewport width in physical pixels.
     width: f32,
+    /// Viewport height in physical pixels.
     height: f32,
 }
 
+/// Computes a centered viewport that fits the logical dimensions inside the physical surface,
+/// preserving aspect ratio with pillarboxing (wide surface) or letterboxing (tall surface).
 fn aspect_viewport(
     surface_width: u32,
     surface_height: u32,
@@ -491,6 +565,8 @@ fn aspect_viewport(
     }
 }
 
+/// Strips the row padding from the mapped buffer and swizzles pixels to packed RGB bytes,
+/// handling both RGBA8 and BGRA8 surface formats.
 fn screenshot_rgb_bytes(
     readback: &ScreenshotReadback,
     data: &[u8],
@@ -517,6 +593,7 @@ fn screenshot_rgb_bytes(
     Ok(rgb)
 }
 
+/// Compiles the WGSL shader and assembles the render pipeline for colored triangles.
 fn create_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("primitive shader"),
@@ -558,13 +635,21 @@ fn create_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::
     })
 }
 
+/// Accumulates axis-aligned colored rectangles and converts them to triangle-list vertices.
+///
+/// Coordinates are in logical pixels; [`into_vertices`](PrimitiveBatch::into_vertices) maps
+/// them to NDC using the canvas `width` and `height`.
 pub struct PrimitiveBatch {
+    /// Logical canvas width, used for NDC mapping.
     width: f32,
+    /// Logical canvas height, used for NDC mapping.
     height: f32,
+    /// Accumulated triangle vertices.
     vertices: Vec<Vertex>,
 }
 
 impl PrimitiveBatch {
+    /// Creates an empty batch for a canvas of the given logical size.
     pub fn new(width: f32, height: f32) -> Self {
         Self {
             width,
@@ -573,21 +658,25 @@ impl PrimitiveBatch {
         }
     }
 
+    /// Consumes the batch and returns the accumulated vertex list.
     pub fn into_vertices(self) -> Vec<Vertex> {
         self.vertices
     }
 
+    /// Appends two triangles that together form a filled axis-aligned rectangle.
     pub fn rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) {
         self.triangle((x, y), (x + width, y), (x + width, y + height), color);
         self.triangle((x, y), (x + width, y + height), (x, y + height), color);
     }
 
+    /// Appends three vertices for one triangle.
     fn triangle(&mut self, a: (f32, f32), b: (f32, f32), c: (f32, f32), color: [f32; 4]) {
         self.vertices.push(self.vertex(a, color));
         self.vertices.push(self.vertex(b, color));
         self.vertices.push(self.vertex(c, color));
     }
 
+    /// Converts a logical-pixel point to an NDC [`Vertex`].
     fn vertex(&self, point: (f32, f32), color: [f32; 4]) -> Vertex {
         Vertex {
             position: [

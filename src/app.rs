@@ -1,3 +1,9 @@
+//! Application harness: window creation, event loop, and frame dispatch.
+//!
+//! [`run`] is the top-level entry point. It creates a [`winit`] event loop, then
+//! delegates rendering and input to [`App`], which drives [`game::GameState`] and
+//! [`audio::AudioScheduler`] on each frame.
+
 use std::{path::Path, sync::Arc, time::Instant};
 
 use winit::{
@@ -15,8 +21,10 @@ use crate::{
     render::{RenderOutcome, Renderer, RendererInitError},
 };
 
+/// Fatal application error returned from [`run`].
 #[derive(Debug)]
 pub enum AppError {
+    /// The winit event loop failed to start or encountered an unrecoverable error.
     EventLoop(winit::error::EventLoopError),
 }
 
@@ -30,22 +38,32 @@ impl std::fmt::Display for AppError {
 
 impl std::error::Error for AppError {}
 
+/// Creates the winit event loop and runs the game until the window is closed or the
+/// player chooses to quit. Blocks until the application exits.
 pub fn run() -> Result<(), AppError> {
     let event_loop = EventLoop::new().map_err(AppError::EventLoop)?;
     let mut app = App::new();
     event_loop.run_app(&mut app).map_err(AppError::EventLoop)
 }
 
+/// winit [`ApplicationHandler`] that ties together the window, renderer, game state, and audio.
 struct App {
+    /// The OS window; `None` until [`resumed`](App::resumed) fires.
     window: Option<Arc<Window>>,
+    /// GPU renderer; `None` until the window is created.
     renderer: Option<Renderer>,
+    /// Top-level game state machine.
     game: GameState,
+    /// Timestamp of the previous frame, used to compute `dt`.
     last_update: Instant,
+    /// Guards against writing more than one first-frame screenshot.
     first_screenshot_taken: bool,
+    /// Audio scheduler; `None` if audio initialisation failed (non-fatal).
     audio: Option<AudioScheduler>,
 }
 
 impl App {
+    /// Creates a new `App`, initialising the audio scheduler if possible.
     fn new() -> Self {
         let audio = AudioScheduler::new()
             .map_err(|e| eprintln!("audio init failed: {e}"))
@@ -60,6 +78,7 @@ impl App {
         }
     }
 
+    /// Creates the OS window and GPU renderer on first call; no-ops on subsequent calls.
     fn init_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), InitError> {
         if self.window.is_some() {
             return Ok(());
@@ -84,6 +103,8 @@ impl App {
     }
 }
 
+/// Sends a list of sound cues to the scheduler: the first cue plays immediately,
+/// subsequent cues are enqueued to play after it.
 fn dispatch_cues(audio: &mut Option<AudioScheduler>, cues: Vec<SoundCue>) {
     if let Some(audio) = audio.as_mut() {
         let mut iter = cues.into_iter();
@@ -197,9 +218,12 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Error that can occur while creating the window or renderer during [`App::init_window`].
 #[derive(Debug)]
 enum InitError {
+    /// OS-level window creation failed.
     Window(winit::error::OsError),
+    /// wgpu surface or device initialisation failed.
     Renderer(RendererInitError),
 }
 
