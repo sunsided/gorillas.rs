@@ -9,9 +9,9 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::render::{Frame, PrimitiveBatch};
 
-/// Logical screen width in pixels (EGA 640×350 mode). GORILLAS.BAS line 172: `ScrWidth = 640`.
+/// Logical screen width in pixels (EGA 640×350 mode). GORILLAS.BAS line 173: `ScrWidth = 640`.
 pub const LOGICAL_WIDTH: u32 = 640;
-/// Logical screen height in pixels (EGA 640×350 mode). GORILLAS.BAS line 173: `ScrHeight = 350`.
+/// Logical screen height in pixels (EGA 640×350 mode). GORILLAS.BAS line 174: `ScrHeight = 350`.
 pub const LOGICAL_HEIGHT: u32 = 350;
 
 /// Background (sky) color: EGA register 1 (dark blue). GORILLAS.BAS line 1072: `PALETTE 0, 1`.
@@ -20,11 +20,11 @@ const BACKGROUND: [f32; 4] = palette_attribute(0);
 const OBJECT: [f32; 4] = palette_attribute(1);
 /// Explosion color: EGA register 44 (red-orange). GORILLAS.BAS line 1074: `PALETTE 2, 44`.
 const EXPLOSION: [f32; 4] = palette_attribute(2);
-/// Lit window color: EGA attribute 14 (bright yellow). GORILLAS.BAS line 11: `CONST WINDOWCOLOR = 14`.
+/// Lit window color: EGA attribute 14 (bright yellow). GORILLAS.BAS line 68: `CONST WINDOWCOLOR = 14`.
 const LIT_WINDOW: [f32; 4] = palette_attribute(14);
 /// Dark window color: EGA attribute 8 (dark gray). GORILLAS.BAS lines 788-789: 1-in-4 dark window.
 const DARK_WINDOW: [f32; 4] = palette_attribute(8);
-/// Sun color: EGA register 54 (cyan). GORILLAS.BAS line 1076: `PALETTE 3, 54`.
+/// Sun color: EGA register 54 (cyan). GORILLAS.BAS line 1075: `PALETTE 3, 54`.
 const SUN: [f32; 4] = palette_attribute(3);
 /// HUD text color: EGA attribute 15 (bright white). Used for scores, player names, and prompts.
 const HUD_TEXT: [f32; 4] = palette_attribute(15);
@@ -44,10 +44,10 @@ const GORILLA_Y_ADJUST: f32 = 30.0;
 /// GORILLAS.BAS line 721: `HtInc = 10` (EGA mode).
 const HEIGHT_INCREMENT: f32 = 10.0;
 /// Base building width before the random component is added.
-/// GORILLAS.BAS line 723: `DefBWidth = 37` (EGA mode).
+/// GORILLAS.BAS line 722: `DefBWidth = 37` (EGA mode).
 const DEFAULT_BUILDING_WIDTH: u32 = 37;
 /// Random height range added to each building.
-/// GORILLAS.BAS line 724: `RandomHeight = 120` (EGA mode).
+/// GORILLAS.BAS line 723: `RandomHeight = 120` (EGA mode).
 const RANDOM_HEIGHT: u32 = 120;
 /// Width of each window pane in pixels.
 /// GORILLAS.BAS line 725: `WWidth = 3` (EGA mode).
@@ -106,13 +106,13 @@ const SPARKLE_FRAME_DURATION: f32 = 0.12;
 /// Matches [`GORILLA_INTRO_PHRASE_DUR_US`](crate::audio) converted to seconds.
 const GORILLA_INTRO_PHRASE_DUR_S: f32 = 2.944_444;
 /// X coordinate of the left gorilla during the intro animation.
-/// GORILLAS.BAS line 639: `PUT (x - 13, y)` at EGA `x = 278`, adjusted to 640×350 coords.
+/// Derived from GORILLAS.BAS `GorillaIntro` sub (line 639): `PUT (x - 13, y)` with `x = 278`.
 const GORILLA_INTRO_X1: f32 = 290.0;
 /// X coordinate of the right gorilla during the intro animation.
-/// GORILLAS.BAS line 639: `PUT (x + 47, y)` at EGA `x = 278`.
+/// Derived from GORILLAS.BAS `GorillaIntro` sub (line 639): `PUT (x + 47, y)` with `x = 278`.
 const GORILLA_INTRO_X2: f32 = 351.0;
 /// Y coordinate of both gorillas during the intro animation.
-/// GORILLAS.BAS line 610: `y = 175` scaled to 640×350 logical coords.
+/// Derived from GORILLAS.BAS `GorillaIntro` sub (line 611): `y = 175`.
 const GORILLA_INTRO_Y: f32 = 290.0;
 /// Sparkle border color on intro and game-over screens.
 /// GORILLAS.BAS line 1092: `COLOR 4, 0` (EGA attribute 4, red).
