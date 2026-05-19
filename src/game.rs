@@ -14,7 +14,7 @@ const SUN: [f32; 4] = palette_attribute(3);
 const HUD_TEXT: [f32; 4] = palette_attribute(15);
 const BOTTOM_LINE: f32 = 335.0;
 const GORILLA_HEIGHT: f32 = 25.0;
-const GORILLA_X_ADJUST: f32 = 14.0;
+const GORILLA_X_ADJUST: f32 = 0.5;
 const GORILLA_Y_ADJUST: f32 = 30.0;
 const HEIGHT_INCREMENT: f32 = 10.0;
 const DEFAULT_BUILDING_WIDTH: u32 = 37;
@@ -39,8 +39,8 @@ const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
 const GORILLA_INTRO_PHRASE_DUR_S: f32 = 2.944_444;
-const GORILLA_INTRO_X1: f32 = 265.0;
-const GORILLA_INTRO_X2: f32 = 325.0;
+const GORILLA_INTRO_X1: f32 = 290.0;
+const GORILLA_INTRO_X2: f32 = 351.0;
 const GORILLA_INTRO_Y: f32 = 290.0;
 const SPARKLE_COLOR: [f32; 4] = palette_attribute(4);
 const TEXT_CELL_WIDTH: i32 = 8;
@@ -1390,7 +1390,7 @@ impl Explosion {
                 winner_index: _,
             } => {
                 let gorilla = gorillas[gorilla_index];
-                (gorilla.x + 12.0, gorilla.y + 12.0)
+                (gorilla.x, gorilla.y + 12.0)
             }
         }
     }
@@ -1762,7 +1762,7 @@ fn fn_ran(rng: &mut SmallRng, upper: u32) -> u32 {
 fn projectile_start(gorilla: Gorilla, player: Player) -> (f32, f32) {
     let x = match player {
         Player::One => gorilla.x,
-        Player::Two => gorilla.x + 25.0,
+        Player::Two => gorilla.x + 13.0,
     };
     let y = gorilla.y - 4.0 - 3.0;
 
@@ -2435,7 +2435,7 @@ mod tests {
         let gorilla = Gorilla { x: 120.0, y: 90.0 };
 
         assert_eq!(projectile_start(gorilla, Player::One), (120.0, 83.0));
-        assert_eq!(projectile_start(gorilla, Player::Two), (145.0, 83.0));
+        assert_eq!(projectile_start(gorilla, Player::Two), (133.0, 83.0));
     }
 
     #[test]
