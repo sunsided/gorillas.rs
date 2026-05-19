@@ -4,7 +4,7 @@ Because someone had to do it: [QBasic Gorillas](https://en.wikipedia.org/wiki/Go
 
 ![Screenshot](.readme/gorillas.png)
 
-The original [`GORILLAS.BAS`](GORILLAS.BAS) is bundled in this repo. The source material is, shall we say, vintage. The render pipeline is not.
+The original and very vintage [`GORILLAS.BAS`](GORILLAS.BAS) is bundled in this repo.
 
 ## How it works
 
