@@ -1,57 +1,138 @@
+//! Core game logic for GORILLAS.RS, a Rust port of QBasic GORILLAS.BAS (IBM Corporation, 1991).
+//!
+//! Handles all game state, physics simulation, procedural city generation, and
+//! software rasterisation. [`GameState`] is the root type; the application layer
+//! calls [`GameState::update`], [`GameState::frame`], and the `handle_*` input methods
+//! each frame.
+
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
 use crate::render::{Frame, PrimitiveBatch};
 
+/// Logical screen width in pixels (EGA 640×350 mode). GORILLAS.BAS line 172: `ScrWidth = 640`.
 pub const LOGICAL_WIDTH: u32 = 640;
+/// Logical screen height in pixels (EGA 640×350 mode). GORILLAS.BAS line 173: `ScrHeight = 350`.
 pub const LOGICAL_HEIGHT: u32 = 350;
 
+/// Background (sky) color: EGA register 1 (dark blue). GORILLAS.BAS line 1072: `PALETTE 0, 1`.
 const BACKGROUND: [f32; 4] = palette_attribute(0);
+/// Gorilla and banana color: EGA register 46 (orange). GORILLAS.BAS line 1073: `PALETTE 1, 46`.
 const OBJECT: [f32; 4] = palette_attribute(1);
+/// Explosion color: EGA register 44 (red-orange). GORILLAS.BAS line 1074: `PALETTE 2, 44`.
 const EXPLOSION: [f32; 4] = palette_attribute(2);
+/// Lit window color: EGA attribute 14 (bright yellow). GORILLAS.BAS line 11: `CONST WINDOWCOLOR = 14`.
 const LIT_WINDOW: [f32; 4] = palette_attribute(14);
+/// Dark window color: EGA attribute 8 (dark gray). GORILLAS.BAS lines 788-789: 1-in-4 dark window.
 const DARK_WINDOW: [f32; 4] = palette_attribute(8);
+/// Sun color: EGA register 54 (cyan). GORILLAS.BAS line 1076: `PALETTE 3, 54`.
 const SUN: [f32; 4] = palette_attribute(3);
+/// HUD text color: EGA attribute 15 (bright white). Used for scores, player names, and prompts.
 const HUD_TEXT: [f32; 4] = palette_attribute(15);
+/// Y coordinate of the ground line; buildings extend upward from here.
+/// GORILLAS.BAS line 720: `BottomLine = 335` (EGA mode).
 const BOTTOM_LINE: f32 = 335.0;
+/// Gorilla sprite height used to cap maximum building height.
+/// GORILLAS.BAS line 175: `GHeight = 25` (EGA mode).
 const GORILLA_HEIGHT: f32 = 25.0;
+/// Horizontal offset to center the gorilla sprite within its building column.
+/// Derived from GORILLAS.BAS line 836: `XAdj = 14` (EGA), halved to a per-side adjustment.
 const GORILLA_X_ADJUST: f32 = 0.5;
+/// Vertical offset from building top to gorilla top-left corner.
+/// GORILLAS.BAS line 837: `YAdj = 30` (EGA mode).
 const GORILLA_Y_ADJUST: f32 = 30.0;
+/// Height step applied per building to produce a sloped skyline profile.
+/// GORILLAS.BAS line 721: `HtInc = 10` (EGA mode).
 const HEIGHT_INCREMENT: f32 = 10.0;
+/// Base building width before the random component is added.
+/// GORILLAS.BAS line 723: `DefBWidth = 37` (EGA mode).
 const DEFAULT_BUILDING_WIDTH: u32 = 37;
+/// Random height range added to each building.
+/// GORILLAS.BAS line 724: `RandomHeight = 120` (EGA mode).
 const RANDOM_HEIGHT: u32 = 120;
+/// Width of each window pane in pixels.
+/// GORILLAS.BAS line 725: `WWidth = 3` (EGA mode).
 const WINDOW_WIDTH: f32 = 3.0;
+/// Height of each window pane in pixels.
+/// GORILLAS.BAS line 726: `WHeight = 6` (EGA mode).
 const WINDOW_HEIGHT: f32 = 6.0;
+/// Vertical spacing between window rows.
+/// GORILLAS.BAS line 727: `WDifV = 15` (EGA mode).
 const WINDOW_VERTICAL_SPACING: f32 = 15.0;
+/// Horizontal spacing between window columns.
+/// GORILLAS.BAS line 728: `WDifh = 10` (EGA mode).
 const WINDOW_HORIZONTAL_SPACING: f32 = 10.0;
+/// Y-axis scale factor for circle primitives. EGA `CIRCLE` used a 1:1 pixel aspect ratio.
 const BASIC_CIRCLE_Y_ASPECT: f32 = 1.0;
+/// Physics time step per advancement tick, in seconds.
+/// GORILLAS.BAS line 1024: `t# = t# + .1`.
 const PROJECTILE_TIME_STEP: f32 = 0.1;
+/// Minimum velocity that produces a real shot; below this the thrower hits themselves.
+/// GORILLAS.BAS lines 963-966: `IF Velocity < 2 THEN`.
 const MIN_THROW_VELOCITY: f32 = 2.0;
+/// Default gravitational acceleration in m/s².
+/// GORILLAS.BAS line 542: `IF gravity# = 0 THEN gravity# = 9.8`.
 const DEFAULT_GRAVITY: f32 = 9.8;
+/// Maximum Y coordinate at which the banana can interact with the sun.
+/// GORILLAS.BAS line 195: `SunHt = 39` (EGA mode).
 const SUN_HEIGHT_LIMIT: f32 = 39.0;
+/// Horizontal distance from sun centre beyond which the banana has left the sun zone.
+/// GORILLAS.BAS line 997: `ABS(ScrWidth \ 2 - x#) > Scl(20)`.
 const SUN_CLEAR_RADIUS: f32 = 20.0;
+/// Duration of a building-hit explosion animation in seconds.
 const EXPLOSION_DURATION: f32 = 0.3;
+/// Maximum radius of a building-hit explosion circle.
+/// GORILLAS.BAS line 275: `Radius = ScrHeight / 50` (350 / 50 = 7).
 const EXPLOSION_MAX_RADIUS: f32 = 7.0;
+/// Duration of a gorilla-hit explosion animation in seconds.
 const GORILLA_EXPLOSION_DURATION: f32 = 0.6;
+/// Maximum radius of a gorilla-hit explosion.
+/// GORILLAS.BAS line 494: `FOR i = 24 * SclX# TO 1 STEP -1` (24 at EGA scale 1).
 const GORILLA_EXPLOSION_MAX_RADIUS: f32 = 24.0;
+/// How long the throwing-arm pose is held before the banana starts moving.
 const THROW_ARM_DURATION: f32 = 0.1;
+/// Interval between arm-swap frames during the victory dance.
+/// GORILLAS.BAS line 1147: `Rest .2`.
 const VICTORY_DANCE_INTERVAL: f32 = 0.2;
+/// Total arm-swap frames in the victory dance (4 loop iterations × 2 arms = 8).
+/// GORILLAS.BAS lines 1142-1149: `FOR i# = 1 TO 4`.
 const VICTORY_DANCE_CYCLES: u8 = 8;
+/// Pause between a hit and the next round's city generation, in seconds.
+/// GORILLAS.BAS line 893: `SLEEP 1`.
 const INTER_ROUND_DELAY: f32 = 1.0;
+/// Duration of each sparkle animation frame on the intro and game-over screens.
+/// Derived from the `SparklePause` sub (GORILLAS.BAS lines 1089-1120).
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
+/// Duration of one gorilla-intro music phrase in seconds.
+/// Matches [`GORILLA_INTRO_PHRASE_DUR_US`](crate::audio) converted to seconds.
 const GORILLA_INTRO_PHRASE_DUR_S: f32 = 2.944_444;
+/// X coordinate of the left gorilla during the intro animation.
+/// GORILLAS.BAS line 639: `PUT (x - 13, y)` at EGA `x = 278`, adjusted to 640×350 coords.
 const GORILLA_INTRO_X1: f32 = 290.0;
+/// X coordinate of the right gorilla during the intro animation.
+/// GORILLAS.BAS line 639: `PUT (x + 47, y)` at EGA `x = 278`.
 const GORILLA_INTRO_X2: f32 = 351.0;
+/// Y coordinate of both gorillas during the intro animation.
+/// GORILLAS.BAS line 610: `y = 175` scaled to 640×350 logical coords.
 const GORILLA_INTRO_Y: f32 = 290.0;
+/// Sparkle border color on intro and game-over screens.
+/// GORILLAS.BAS line 1092: `COLOR 4, 0` (EGA attribute 4, red).
 const SPARKLE_COLOR: [f32; 4] = palette_attribute(4);
+/// Width of one text character cell in pixels.
 const TEXT_CELL_WIDTH: i32 = 8;
+/// Height of one text character cell in pixels.
 const TEXT_CELL_HEIGHT: i32 = 14;
 
+/// Return value from [`Game::update`], carrying side-effects for the caller.
 #[derive(Debug)]
 pub struct GameUpdate {
+    /// Audio cues to play this frame, in order.
     pub cues: Vec<crate::audio::SoundCue>,
+    /// Set to the winning player's index (0 or 1) when the match ends this frame.
     pub match_over: Option<usize>,
 }
 
+/// Converts an EGA color attribute index to an sRGB `[r, g, b, 1.0]` float color,
+/// using the palette remapping from GORILLAS.BAS `SetScreen` (lines 1069-1087).
 const fn palette_attribute(attribute: u8) -> [f32; 4] {
     let [red, green, blue] = palette_attribute_rgb(attribute);
     [
@@ -62,10 +143,13 @@ const fn palette_attribute(attribute: u8) -> [f32; 4] {
     ]
 }
 
+/// Returns raw RGB bytes for an EGA attribute index after applying the `SetScreen` palette map.
 const fn palette_attribute_rgb(attribute: u8) -> [u8; 3] {
     ega_palette_rgb(palette_register(attribute))
 }
 
+/// Maps a color attribute index to an EGA palette register number,
+/// replicating the `PALETTE` calls in GORILLAS.BAS `SetScreen` (lines 1072-1079).
 const fn palette_register(attribute: u8) -> u8 {
     match attribute {
         0 => 1,
@@ -80,6 +164,7 @@ const fn palette_register(attribute: u8) -> u8 {
     }
 }
 
+/// Default EGA attribute-to-register mapping for attributes not remapped by `SetScreen`.
 const fn default_ega_register(attribute: u8) -> u8 {
     match attribute {
         0 => 0,
@@ -102,6 +187,8 @@ const fn default_ega_register(attribute: u8) -> u8 {
     }
 }
 
+/// Converts a 6-bit EGA palette register value to an RGB byte triple
+/// using the two-bit primary/secondary encoding of the 64-color EGA palette.
 const fn ega_palette_rgb(value: u8) -> [u8; 3] {
     [
         ega_component(value, 2, 5),
@@ -110,6 +197,8 @@ const fn ega_palette_rgb(value: u8) -> [u8; 3] {
     ]
 }
 
+/// Extracts one color channel from a 6-bit EGA register value.
+/// `primary_bit` and `secondary_bit` are the two EGA intensity bits for this channel.
 const fn ega_component(value: u8, primary_bit: u8, secondary_bit: u8) -> u8 {
     let primary = (value >> primary_bit) & 1;
     let secondary = (value >> secondary_bit) & 1;
@@ -122,47 +211,78 @@ const fn ega_component(value: u8, primary_bit: u8, secondary_bit: u8) -> u8 {
     }
 }
 
+/// Gorilla arm pose, used for drawing and to identify which player is throwing.
+/// GORILLAS.BAS constants `RIGHTUP = 1`, `LEFTUP = 2`, `ARMSDOWN = 3` (lines 72-74).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum GorillaArms {
+    /// Right arm raised: player 2's throwing pose. GORILLAS.BAS line 72: `CONST RIGHTUP = 1`.
     RightUp,
+    /// Left arm raised: player 1's throwing pose. GORILLAS.BAS line 73: `CONST LEFTUP = 2`.
     LeftUp,
+    /// Both arms down: idle pose. GORILLAS.BAS line 74: `CONST ARMSDOWN = 3`.
     Down,
 }
 
+/// State machine phase for the gorilla introduction screen.
+/// GORILLAS.BAS `GorillaIntro` sub (lines 596-674).
 #[derive(Debug)]
 enum GorillaIntroPhase {
+    /// Showing the "V = View Intro / P = Play Game" prompt. GORILLAS.BAS lines 597-605.
     ChoiceMenu,
+    /// Playing the animated gorilla dance and music. GORILLAS.BAS lines 633-673.
     Animation {
+        /// Accumulated time within the current phrase, in seconds.
         timer: f32,
+        /// Which of the four musical phrases (0-3) is currently playing.
         phrase: u8,
+        /// Arm pose both gorillas currently show (alternates each phrase).
         arm: GorillaArms,
     },
 }
 
+/// Persistent state for the gorilla introduction screen.
 #[derive(Debug)]
 struct GorillaIntroState {
+    /// Current animation or menu phase.
     phase: GorillaIntroPhase,
+    /// Player names displayed in the "STARRING:" banner.
     player_names: [String; 2],
+    /// Whether the intro music cue still needs to be dispatched on the next update tick.
     sound_pending: bool,
 }
 
+/// Active round game state. GORILLAS.BAS `PlayGame` sub (lines 862-910).
 #[derive(Debug)]
 pub struct Game {
+    /// Current city skyline and wind speed.
     round: Round,
+    /// Positions of both gorillas, indexed by [`Player::index`].
     gorillas: [Gorilla; 2],
+    /// Banana in flight, if any.
     projectile: Option<Projectile>,
+    /// Explosion animation in progress, if any.
     explosion: Option<Explosion>,
+    /// Whether the sun is showing its shocked face after being grazed by the banana.
+    /// GORILLAS.BAS line 100: `DIM SHARED SunHit`.
     sun_shocked: bool,
+    /// Which player's turn it currently is.
     current_player: Player,
+    /// Win counts for each player, indexed by [`Player::index`].
+    /// GORILLAS.BAS `TotalWins(1 TO 2)` array (line 864).
     scores: [u32; 2],
+    /// Display names for each player. GORILLAS.BAS `Player1$`, `Player2$`.
     player_names: [String; 2],
+    /// Input and animation phase within the current turn.
     turn_phase: TurnPhase,
+    /// Gravitational acceleration in m/s². GORILLAS.BAS line 87: `DIM SHARED gravity#`.
     gravity: f32,
+    /// Number of wins required to end the match.
     target_score: u32,
 }
 
 impl Game {
+    /// Creates a new game with default player names, gravity, and a randomly seeded first round.
     pub fn new() -> Self {
         let (round, gorillas) = make_round(rand::random());
 
@@ -183,6 +303,8 @@ impl Game {
         }
     }
 
+    /// Advances the game by `dt` seconds. Returns any audio cues and the match-over signal.
+    /// Drives explosion timers, victory dance, inter-round delay, and projectile physics.
     pub fn update(&mut self, dt: f32) -> GameUpdate {
         let mut cues = Vec::new();
         if let Some(explosion) = self.explosion.as_mut() {
@@ -310,6 +432,7 @@ impl Game {
         }
     }
 
+    /// Rasterises the current game state into a [`Frame`] ready for the GPU renderer.
     pub fn frame(&self) -> Frame {
         let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
         self.draw_scene(&mut canvas, true);
@@ -332,6 +455,8 @@ impl Game {
         }
     }
 
+    /// Appends `ch` to the active numeric input field; ignores input while a shot is in flight.
+    /// GORILLAS.BAS `GetNum` function (lines 549-588): accepts digits and `.`.
     pub fn handle_char(&mut self, ch: char) {
         if self.projectile.is_some() || self.explosion.is_some() {
             return;
@@ -348,6 +473,8 @@ impl Game {
         input.push(ch);
     }
 
+    /// Removes the last character from the active input field.
+    /// GORILLAS.BAS `GetNum` line 574: `CHR$(8)` (backspace) handling.
     pub fn handle_backspace(&mut self) {
         if self.projectile.is_some() || self.explosion.is_some() {
             return;
@@ -356,6 +483,10 @@ impl Game {
         self.active_input_mut().pop();
     }
 
+    /// Confirms the active input field, advancing the turn phase.
+    /// On angle confirm: advances to velocity input.
+    /// On velocity confirm: launches the banana (or triggers self-hit if velocity is too low).
+    /// GORILLAS.BAS `DoShot` function (lines 295-338).
     pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
         let mut cues = Vec::new();
         if self.projectile.is_some() || self.explosion.is_some() {
@@ -411,6 +542,8 @@ impl Game {
         cues
     }
 
+    /// Draws the HUD: player names, scores, and the active angle/velocity input prompt.
+    /// GORILLAS.BAS `PlayGame` lines 879-882 and `DoShot` lines 308-326.
     fn draw_hud(&self, canvas: &mut Canvas) {
         draw_text(canvas, 1, 1, &self.player_names[0], HUD_TEXT);
 
@@ -452,6 +585,8 @@ impl Game {
         }
     }
 
+    /// Draws the persistent scene: sun, city skyline, optional wind arrow, and gorillas.
+    /// `include_wind` is `false` when rendering the collision canvas to avoid false hits.
     fn draw_scene(&self, canvas: &mut Canvas, include_wind: bool) {
         draw_sun(canvas, self.sun_shocked);
         draw_city(canvas, &self.round.buildings);
@@ -488,12 +623,16 @@ impl Game {
         }
     }
 
+    /// Renders the scene (without wind) into a canvas used for pixel-based collision detection.
+    /// GORILLAS.BAS `PlotShot` uses `POINT(x, y)` to read pixel colors (lines 993-1004).
     fn collision_canvas(&self) -> Canvas {
         let mut canvas = Canvas::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
         self.draw_scene(&mut canvas, false);
         canvas
     }
 
+    /// Returns `true` if the active gorilla explosion is centred on the given gorilla index,
+    /// used to suppress drawing the gorilla while it is exploding.
     fn explosion_hits_gorilla(&self, gorilla_index: usize) -> bool {
         matches!(
             self.explosion,
@@ -507,6 +646,8 @@ impl Game {
         )
     }
 
+    /// Called when an explosion animation completes. Increments the score for a gorilla hit
+    /// and signals match-over if the winner has reached the target score.
     fn finish_explosion(&mut self, explosion: Explosion) -> Option<usize> {
         self.sun_shocked = false;
         match explosion.kind {
@@ -534,6 +675,7 @@ impl Game {
         }
     }
 
+    /// Switches to the other player and resets to the angle-input phase.
     fn advance_turn(&mut self) {
         self.current_player = self.current_player.other();
         self.sun_shocked = false;
@@ -543,6 +685,8 @@ impl Game {
         };
     }
 
+    /// Returns a mutable reference to whichever input string the current turn phase is editing.
+    /// Panics if called during a phase that has no text input.
     fn active_input_mut(&mut self) -> &mut String {
         match &mut self.turn_phase {
             TurnPhase::EnterAngle { input } => input,
@@ -557,9 +701,14 @@ impl Game {
     }
 }
 
+/// Player-configurable match parameters, collected by the setup screen.
+/// GORILLAS.BAS `GetInputs` sub (lines 508-543).
 pub struct MatchConfig {
+    /// Display names for each player (max 10 chars). GORILLAS.BAS `Player1$`, `Player2$`.
     pub player_names: [String; 2],
+    /// Number of wins required to end the match. GORILLAS.BAS `NumGames`.
     pub target_score: u32,
+    /// Gravity in m/s². GORILLAS.BAS line 539: `INPUT "Gravity in Meters/Sec (Earth = 9.8)"`.
     pub gravity: f32,
 }
 
@@ -573,30 +722,48 @@ impl Default for MatchConfig {
     }
 }
 
+/// Final scores and names captured when the match ends, retained for the game-over screen.
+/// GORILLAS.BAS `PlayGame` lines 901-909.
 struct MatchOverState {
+    /// Final win counts for each player.
     scores: [u32; 2],
+    /// Player display names at match end.
     names: [String; 2],
 }
 
+/// Top-level application screen, matching the screen flow in GORILLAS.BAS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppScreen {
+    /// Title screen with sparkle border. GORILLAS.BAS `Intro` sub (lines 677-699).
     Intro,
+    /// Player name / score / gravity configuration. GORILLAS.BAS `GetInputs` sub (lines 508-543).
     ConfigMenu,
+    /// Animated gorilla dance intro. GORILLAS.BAS `GorillaIntro` sub (lines 596-674).
     GorillaIntro,
+    /// Active game round. GORILLAS.BAS `PlayGame` sub (lines 862-910).
     Playing,
+    /// Game-over summary. GORILLAS.BAS `PlayGame` lines 901-909.
     MatchOver,
+    /// "Would you like to play again?" prompt. GORILLAS.BAS lines 121-130.
     PlayAgain,
 }
 
+/// Which input field has keyboard focus on the configuration screen.
+/// GORILLAS.BAS `GetInputs` sub (lines 508-543).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConfigField {
+    /// Player 1 name. GORILLAS.BAS line 513: `LINE INPUT "Name of Player 1..."`.
     PlayerOneName,
+    /// Player 2 name. GORILLAS.BAS line 520: `LINE INPUT "Name of Player 2..."`.
     PlayerTwoName,
+    /// Target win count. GORILLAS.BAS line 531: `INPUT "Play to how many total points..."`.
     TargetScore,
+    /// Gravity value. GORILLAS.BAS line 539: `INPUT "Gravity in Meters/Sec (Earth = 9.8)"`.
     Gravity,
 }
 
 impl ConfigField {
+    /// Returns a 0-based numeric index for the field, used to track which fields have been confirmed.
     fn index(self) -> usize {
         match self {
             Self::PlayerOneName => 0,
@@ -607,21 +774,35 @@ impl ConfigField {
     }
 }
 
+/// Root application state machine. Drives the full screen flow from intro through match-over.
 pub struct GameState {
+    /// Currently displayed screen.
     pub screen: AppScreen,
+    /// Set to `true` when the player chooses to quit (e.g. 'N' on the play-again prompt).
     pub exit_requested: bool,
+    /// Match configuration being assembled on the config screen.
     config: MatchConfig,
+    /// Which config field currently has keyboard focus.
     active_field: ConfigField,
+    /// Text being typed into the active config field.
     field_input: String,
+    /// Active game session.
     game: Game,
+    /// Final scores retained after a match ends, for the game-over screen.
     match_over_state: Option<MatchOverState>,
+    /// State of the gorilla intro animation when active.
     gorilla_intro: Option<GorillaIntroState>,
+    /// Current sparkle pattern frame index (0-4, cycles at 5).
+    /// GORILLAS.BAS `SparklePause` sub (lines 1089-1120).
     sparkle_frame: u8,
+    /// Accumulated time toward the next sparkle frame advance.
     sparkle_timer: f32,
+    /// Whether the intro music cue still needs to be dispatched on the first frame.
     intro_cue_pending: bool,
 }
 
 impl GameState {
+    /// Creates a new `GameState` starting on the intro screen.
     pub fn new() -> Self {
         Self {
             screen: AppScreen::Intro,
@@ -638,6 +819,7 @@ impl GameState {
         }
     }
 
+    /// Advances the current screen by `dt` seconds. Returns audio cues to play this frame.
     pub fn update(&mut self, dt: f32) -> Vec<crate::audio::SoundCue> {
         match self.screen {
             AppScreen::Intro => {
@@ -701,6 +883,7 @@ impl GameState {
         }
     }
 
+    /// Rasterises the current screen into a [`Frame`] ready for the GPU renderer.
     pub fn frame(&self) -> Frame {
         match self.screen {
             AppScreen::Intro => {
@@ -783,6 +966,8 @@ impl GameState {
         }
     }
 
+    /// Draws the player-name / gravity / score configuration screen.
+    /// GORILLAS.BAS `GetInputs` sub (lines 508-543).
     fn render_config_screen(&self, canvas: &mut Canvas) {
         let active = self.active_field.index();
 
@@ -851,6 +1036,8 @@ impl GameState {
         }
     }
 
+    /// Draws the title intro screen with mission text and animated sparkle border.
+    /// GORILLAS.BAS `Intro` sub (lines 677-699) and `SparklePause` (lines 1089-1120).
     fn render_intro_screen(&self, canvas: &mut Canvas) {
         draw_text(
             canvas,
@@ -939,6 +1126,8 @@ impl GameState {
         }
     }
 
+    /// Draws either the choice menu or the gorilla dance animation for the intro screen.
+    /// GORILLAS.BAS `GorillaIntro` sub (lines 596-674).
     fn render_gorilla_intro_screen(&self, state: &GorillaIntroState, canvas: &mut Canvas) {
         match &state.phase {
             GorillaIntroPhase::ChoiceMenu => {
@@ -990,6 +1179,7 @@ impl GameState {
         }
     }
 
+    /// Routes a printable character to the active screen's input handler.
     pub fn handle_char(&mut self, ch: char) {
         match self.screen {
             AppScreen::Intro => {
@@ -1025,6 +1215,7 @@ impl GameState {
         }
     }
 
+    /// Routes a backspace key to the active screen's input handler.
     pub fn handle_backspace(&mut self) {
         match self.screen {
             AppScreen::Intro => {
@@ -1046,6 +1237,7 @@ impl GameState {
         }
     }
 
+    /// Routes an Enter key to the active screen's input handler, returning any audio cues.
     pub fn handle_submit(&mut self) -> Vec<crate::audio::SoundCue> {
         match self.screen {
             AppScreen::Intro => {
@@ -1071,6 +1263,7 @@ impl GameState {
         }
     }
 
+    /// Resets all state to start a new match from the configuration screen.
     fn reset_to_config(&mut self) {
         self.screen = AppScreen::ConfigMenu;
         self.exit_requested = false;
@@ -1082,6 +1275,8 @@ impl GameState {
         self.gorilla_intro = None;
     }
 
+    /// Appends `ch` to the active config field, applying per-field validation
+    /// (name max 10 chars, score max 2 digits, gravity accepts digits and one decimal point).
     fn config_handle_char(&mut self, ch: char) {
         match self.active_field {
             ConfigField::PlayerOneName | ConfigField::PlayerTwoName => {
@@ -1102,6 +1297,8 @@ impl GameState {
         }
     }
 
+    /// Confirms the current config field and advances to the next one,
+    /// applying defaults for empty inputs. On gravity confirm, transitions to gorilla intro.
     fn config_handle_submit(&mut self) {
         match self.active_field {
             ConfigField::PlayerOneName => {
@@ -1155,6 +1352,7 @@ impl GameState {
         }
     }
 
+    /// Copies the finalised [`MatchConfig`] into the active [`Game`] and transitions to playing.
     fn apply_config_and_start(&mut self) {
         self.game.player_names = self.config.player_names.clone();
         self.game.gravity = self.config.gravity;
@@ -1163,48 +1361,76 @@ impl GameState {
     }
 }
 
+/// One round of the game: a procedurally generated city skyline and a wind speed.
+/// GORILLAS.BAS `MakeCityScape` output (lines 706-825).
 #[derive(Clone, Debug, PartialEq)]
 struct Round {
+    /// Buildings from left to right.
     buildings: Vec<Building>,
+    /// Wind speed in display units; positive = rightward.
+    /// GORILLAS.BAS line 88: `DIM SHARED Wind`. Affects projectile horizontal drift.
     wind: i32,
 }
 
+/// One building in the city skyline.
+/// GORILLAS.BAS stores only the upper-left corner in `BCoor()`; the Rust port adds width, height, color, and windows.
 #[derive(Clone, Debug, PartialEq)]
 struct Building {
+    /// Left edge X coordinate in logical pixels.
     x: f32,
+    /// Building width in logical pixels.
     width: f32,
+    /// Building height in logical pixels (extends upward from `BOTTOM_LINE`).
     height: f32,
+    /// Wall color — one of three random EGA colors (attributes 5-7).
+    /// GORILLAS.BAS line 777: `BuildingColor = FnRan(3) + 4`.
     color: [f32; 4],
+    /// Window panes to draw on the building face.
     windows: Vec<WindowRect>,
 }
 
 impl Building {
+    /// Y coordinate of the building's top edge (where the gorilla stands).
     fn top(&self) -> f32 {
         BOTTOM_LINE - self.height
     }
 }
 
+/// Position and lighting state of one window pane on a building.
+/// GORILLAS.BAS lines 784-797 in `MakeCityScape`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct WindowRect {
+    /// Left edge X in logical pixels.
     x: f32,
+    /// Top edge Y in logical pixels.
     y: f32,
+    /// `true` = yellow (lit); `false` = dark gray.
+    /// GORILLAS.BAS lines 788-789: 1-in-4 chance of a dark window.
     lit: bool,
 }
 
+/// Screen position (top-left corner) of a gorilla sprite.
+/// GORILLAS.BAS line 77: `DIM SHARED GorillaX(1 TO 2)`, line 78: `DIM SHARED GorillaY(1 TO 2)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Gorilla {
+    /// Left edge of the gorilla sprite in logical pixels.
     x: f32,
+    /// Top edge of the gorilla sprite in logical pixels.
     y: f32,
 }
 
+/// One of two players. GORILLAS.BAS uses 1-indexed `PlayerNum`; here we use a typed enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 enum Player {
+    /// Left-side player. GORILLAS.BAS `PlayerNum = 1`.
     One,
+    /// Right-side player. GORILLAS.BAS `PlayerNum = 2`.
     Two,
 }
 
 impl Player {
+    /// Returns 0 for [`Player::One`] and 1 for [`Player::Two`], for array indexing.
     fn index(self) -> usize {
         match self {
             Self::One => 0,
@@ -1212,6 +1438,7 @@ impl Player {
         }
     }
 
+    /// Returns the opposing player.
     fn other(self) -> Self {
         match self {
             Self::One => Self::Two,
@@ -1220,6 +1447,8 @@ impl Player {
     }
 }
 
+/// Returns the raised-arm pose a gorilla shows when throwing.
+/// GORILLAS.BAS lines 930-934: `IF PlayerNum = 1 THEN PUT ... GorL& ELSE PUT ... GorR&`.
 fn throwing_arm_pose(player: Player) -> GorillaArms {
     match player {
         Player::One => GorillaArms::LeftUp,
@@ -1227,40 +1456,72 @@ fn throwing_arm_pose(player: Player) -> GorillaArms {
     }
 }
 
+/// State machine for the input and animation sequence within one turn.
+/// Drives the GORILLAS.BAS `DoShot` function flow (lines 295-338).
 #[derive(Clone, Debug, PartialEq)]
 enum TurnPhase {
+    /// Waiting for the player to enter a throw angle.
+    /// GORILLAS.BAS line 309: `PRINT "Angle:"`.
     EnterAngle {
+        /// Current typed digits.
         input: String,
     },
+    /// Angle confirmed; waiting for throw velocity.
+    /// GORILLAS.BAS line 312: `PRINT "Velocity:"`.
     EnterVelocity {
+        /// Confirmed throw angle in degrees.
         angle_deg: f32,
+        /// Current typed digits for velocity.
         input: String,
     },
+    /// Banana just launched; showing the raised-arm pose for a brief moment.
+    /// GORILLAS.BAS lines 930-934: gorilla PUT with raised arm before banana animation.
     ThrowingArm {
+        /// Which player threw.
         player: Player,
+        /// Remaining time in the pose, in seconds.
         timer: f32,
     },
+    /// Winner gorilla is dancing after a hit.
+    /// GORILLAS.BAS `VictoryDance` sub (lines 1136-1150).
     VictoryDance {
+        /// Index of the dancing (winning) gorilla.
         winner_index: usize,
+        /// Index of the eliminated gorilla (hidden during the dance).
         loser_index: usize,
+        /// Arm-swap frame counter; ends the dance when it reaches [`VICTORY_DANCE_CYCLES`].
         cycle: u8,
+        /// Time until the next arm-swap frame.
         timer: f32,
     },
+    /// Brief pause between rounds while the new cityscape is generated.
+    /// GORILLAS.BAS line 893: `SLEEP 1`.
     InterRound {
+        /// Remaining pause time in seconds.
         timer: f32,
     },
+    /// Banana is in flight; physics is stepped each update.
+    /// GORILLAS.BAS `PlotShot` function (lines 918-1036).
     ProjectileFlying,
 }
 
+/// Rotation state of the banana sprite as it tumbles through the air.
+/// GORILLAS.BAS `DrawBan` `r` parameter (lines 394-407): 0=Left, 1=Up, 2=Down, 3=Right.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BananaRotation {
+    /// Sideways-left orientation. GORILLAS.BAS line 398: `PUT ... LBan&`.
     Left,
+    /// Tip-up orientation. GORILLAS.BAS line 400: `PUT ... UBan&`.
     Up,
+    /// Tip-down orientation. GORILLAS.BAS line 402: `PUT ... DBan&`.
     Down,
+    /// Sideways-right orientation. GORILLAS.BAS line 404: `PUT ... RBan&`.
     Right,
 }
 
 impl BananaRotation {
+    /// Derives the rotation from a frame counter, cycling through all four states.
+    /// GORILLAS.BAS line 1012: `rot = (t# * 10) MOD 4`.
     fn from_frame(frame: u8) -> Self {
         match frame % 4 {
             0 => Self::Left,
@@ -1270,6 +1531,8 @@ impl BananaRotation {
         }
     }
 
+    /// Returns the ASCII art sprite rows for this rotation.
+    /// `'#'` = filled pixel, `'.'` = transparent. Replaces the EGA `PUT` bitmap data.
     fn sprite(self) -> &'static [&'static str] {
         match self {
             Self::Left => &["..##..", ".####.", "######", ".####.", "..##.."],
@@ -1280,11 +1543,17 @@ impl BananaRotation {
     }
 }
 
+/// A point-in-time snapshot of the banana's position and display state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ProjectileSample {
+    /// Horizontal position in logical pixels.
     x: f32,
+    /// Vertical position in logical pixels.
     y: f32,
+    /// Current banana rotation frame.
     rotation: BananaRotation,
+    /// `false` when the banana has exited the playing field.
+    /// GORILLAS.BAS line 982: off-screen check in `PlotShot`.
     on_screen: bool,
 }
 
@@ -1295,17 +1564,26 @@ enum SlowShotOutcome {
     SelfHit { player: Player },
 }
 
+/// Banana in flight. GORILLAS.BAS `PlotShot` function (lines 918-1036).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Projectile {
+    /// Gorilla position at the moment of release.
     start: Gorilla,
+    /// Which player threw this banana.
     player: Player,
+    /// Launch angle in degrees (already adjusted for player direction).
     angle_degrees: f32,
+    /// Launch velocity. GORILLAS.BAS `Velocity` variable.
     velocity: f32,
+    /// Physics time elapsed since launch, in seconds. GORILLAS.BAS variable `t#`.
     elapsed: f32,
+    /// Whether the banana is currently inside the sun zone.
+    /// GORILLAS.BAS line 947: `ShotInSun = FALSE`.
     shot_in_sun: bool,
 }
 
 impl Projectile {
+    /// Creates a new projectile from the given gorilla position, launch angle, and velocity.
     fn new(start: Gorilla, player: Player, angle_degrees: f32, velocity: f32) -> Self {
         Self {
             start,
@@ -1317,11 +1595,14 @@ impl Projectile {
         }
     }
 
+    /// Advances elapsed time by an integer multiple of `PROJECTILE_TIME_STEP`.
+    /// GORILLAS.BAS line 1024: `t# = t# + .1` (always advances by exactly one step).
     fn advance(&mut self, dt: f32) {
         let steps = (dt / PROJECTILE_TIME_STEP).floor().max(1.0);
         self.elapsed += steps * PROJECTILE_TIME_STEP;
     }
 
+    /// Evaluates the banana's current position, rotation, and on-screen status.
     fn sample(self, wind: i32, gravity: f32) -> ProjectileSample {
         projectile_sample(
             self.start,
@@ -1335,13 +1616,18 @@ impl Projectile {
     }
 }
 
+/// An active explosion animation, either from a building hit or a gorilla hit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Explosion {
+    /// Determines geometry, duration, and sound. See [`ExplosionKind`].
     kind: ExplosionKind,
+    /// Animation time elapsed since the explosion started, in seconds.
     elapsed: f32,
 }
 
 impl Explosion {
+    /// Creates a building-hit explosion centred at `(x, y)`.
+    /// GORILLAS.BAS `DoExplosion` sub (lines 272-286).
     fn building(x: f32, y: f32) -> Self {
         Self {
             kind: ExplosionKind::Building { x, y },
@@ -1349,6 +1635,8 @@ impl Explosion {
         }
     }
 
+    /// Creates a gorilla-hit explosion for the given victim and scorer.
+    /// GORILLAS.BAS `ExplodeGorilla` function (lines 476-501).
     fn gorilla(gorilla_index: usize, winner_index: usize) -> Self {
         Self {
             kind: ExplosionKind::Gorilla {
@@ -1359,14 +1647,17 @@ impl Explosion {
         }
     }
 
+    /// Advances the animation timer by `dt` seconds.
     fn advance(&mut self, dt: f32) {
         self.elapsed += dt;
     }
 
+    /// Returns `true` when the animation has run to completion.
     fn finished(self) -> bool {
         self.elapsed >= self.duration()
     }
 
+    /// Returns the current explosion radius for gorilla explosions; building explosions use a ring.
     fn radius(self) -> f32 {
         let max_radius = match self.kind {
             ExplosionKind::Building { .. } => EXPLOSION_MAX_RADIUS,
@@ -1375,6 +1666,7 @@ impl Explosion {
         (self.elapsed / self.duration()).clamp(0.2, 1.0) * max_radius
     }
 
+    /// Returns the total animation duration in seconds, varying by explosion kind.
     fn duration(self) -> f32 {
         match self.kind {
             ExplosionKind::Building { .. } => EXPLOSION_DURATION,
@@ -1382,6 +1674,8 @@ impl Explosion {
         }
     }
 
+    /// Returns the explosion centre in logical pixels.
+    /// For gorilla explosions the centre tracks the gorilla position.
     fn center(self, gorillas: &[Gorilla; 2]) -> (f32, f32) {
         match self.kind {
             ExplosionKind::Building { x, y } => (x, y),
@@ -1396,38 +1690,64 @@ impl Explosion {
     }
 }
 
+/// What a [`Explosion`] animation represents.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum ExplosionKind {
+    /// Banana hit a building. GORILLAS.BAS `DoExplosion` sub (lines 272-286).
     Building {
+        /// Explosion centre X in logical pixels.
         x: f32,
+        /// Explosion centre Y in logical pixels.
         y: f32,
     },
+    /// Banana hit a gorilla. GORILLAS.BAS `ExplodeGorilla` function (lines 476-501).
     Gorilla {
+        /// Index of the gorilla that was hit.
         gorilla_index: usize,
+        /// Index of the gorilla that scored the hit (winner).
         winner_index: usize,
     },
 }
 
+/// What the banana collided with, as determined by [`probe_projectile_collision`].
+/// GORILLAS.BAS `PlotShot` lines 1028-1032.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImpactKind {
+    /// Hit a building or any non-gorilla, non-background pixel.
     Building,
+    /// Hit a gorilla; the inner value is the victim's player index.
     Gorilla(usize),
 }
 
+/// Result of one collision-detection scan in [`probe_projectile_collision`].
+/// GORILLAS.BAS `PlotShot` pixel-checking loop (lines 990-1025).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum CollisionProbe {
+    /// No solid impact this frame; carries updated `shot_in_sun` flag.
     Clear { shot_in_sun: bool },
+    /// Banana grazed the sun this frame; the sun should show its shocked face.
+    /// GORILLAS.BAS lines 999-1002: `IF pointval = SUNATTR`.
     Sun { shot_in_sun: bool },
+    /// Banana hit something solid. `x` and `y` are the explosion centre.
     Impact { kind: ImpactKind, x: f32, y: f32 },
 }
 
+/// Software rasterisation target, replacing the QBasic screen buffer.
+///
+/// Pixels are `Option<[f32; 4]>`: `None` = undrawn (background color from the GPU clear);
+/// `Some(color)` = explicitly painted. [`into_vertices`](Canvas::into_vertices) run-length-encodes
+/// horizontal pixel spans into GPU rectangles for efficient upload.
 struct Canvas {
+    /// Canvas width in logical pixels.
     width: u32,
+    /// Canvas height in logical pixels.
     height: u32,
+    /// Flat pixel array in row-major order. `None` = undrawn.
     pixels: Vec<Option<[f32; 4]>>,
 }
 
 impl Canvas {
+    /// Creates a blank canvas with all pixels undrawn (`None`).
     fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -1436,6 +1756,8 @@ impl Canvas {
         }
     }
 
+    /// Run-length-encodes horizontal pixel spans into GPU rectangles.
+    /// Replaces the QBasic screen buffer; each contiguous same-color span becomes one draw call.
     fn into_vertices(self) -> Vec<crate::render::Vertex> {
         let mut batch = PrimitiveBatch::new(self.width as f32, self.height as f32);
 
@@ -1462,6 +1784,7 @@ impl Canvas {
         batch.into_vertices()
     }
 
+    /// Sets one pixel, clipping silently if out of bounds. Replaces QBasic `PSET (x, y), color`.
     fn pixel(&mut self, x: f32, y: f32, color: [f32; 4]) {
         let x = x.round() as i32;
         let y = y.round() as i32;
@@ -1473,6 +1796,8 @@ impl Canvas {
         self.pixels[index] = Some(color);
     }
 
+    /// Reads one pixel; returns `None` for out-of-bounds or undrawn pixels.
+    /// Replaces QBasic `POINT(x, y)` used in collision detection (GORILLAS.BAS lines 993-1004).
     fn point(&self, x: f32, y: f32) -> Option<[f32; 4]> {
         let x = x.round() as i32;
         let y = y.round() as i32;
@@ -1483,6 +1808,7 @@ impl Canvas {
         self.pixels[y as usize * self.width as usize + x as usize]
     }
 
+    /// Draws a filled rectangle. Replaces QBasic `LINE (x0,y0)-(x1,y1),color,BF`.
     fn rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) {
         let x0 = x.round() as i32;
         let y0 = y.round() as i32;
@@ -1491,6 +1817,8 @@ impl Canvas {
         self.fill_rect_inclusive(x0, y0, x1, y1, color);
     }
 
+    /// Draws a thick line by offsetting multiple single-pixel Bresenham passes.
+    /// Replaces QBasic `LINE (x0,y0)-(x1,y1),color` used for sun rays and wind arrows.
     fn line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, thickness: f32, color: [f32; 4]) {
         let half = ((thickness.max(1.0).round() as i32) - 1) / 2;
         let horizontalish = (x1 - x0).abs() >= (y1 - y0).abs();
@@ -1504,6 +1832,8 @@ impl Canvas {
         }
     }
 
+    /// Draws a filled circle. Replaces QBasic `CIRCLE (x,y),r,color` followed by `PAINT`.
+    /// `_segments` is accepted but ignored; the fill uses a scanline rasteriser.
     fn circle(&mut self, x: f32, y: f32, radius: f32, _segments: usize, color: [f32; 4]) {
         let min_x = (x - radius).floor() as i32;
         let max_x = (x + radius).ceil() as i32;
@@ -1522,6 +1852,8 @@ impl Canvas {
         }
     }
 
+    /// Draws a one-pixel-wide circle outline (ring). Used for the building-hit explosion animation.
+    /// GORILLAS.BAS `DoExplosion` sub (lines 272-286): `CIRCLE (x,y),Radius,2`.
     fn circle_ring(&mut self, x: f32, y: f32, radius: f32, color: [f32; 4]) {
         let min_x = (x - radius - 1.0).floor() as i32;
         let max_x = (x + radius + 1.0).ceil() as i32;
@@ -1542,6 +1874,8 @@ impl Canvas {
         }
     }
 
+    /// Draws an arc from `start` to `end` (radians, counter-clockwise) with the given thickness.
+    /// Replaces QBasic `CIRCLE (x,y),r,color,start,end` used for gorilla arms and sun smile.
     #[allow(clippy::too_many_arguments)]
     fn arc(
         &mut self,
@@ -1582,6 +1916,7 @@ impl Canvas {
         }
     }
 
+    /// Fills an axis-aligned rectangle specified by two inclusive corner coordinates.
     fn fill_rect_inclusive(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [f32; 4]) {
         for y in y0.min(y1)..=y0.max(y1) {
             for x in x0.min(x1)..=x0.max(x1) {
@@ -1590,6 +1925,7 @@ impl Canvas {
         }
     }
 
+    /// Draws a single-pixel-wide line using Bresenham's algorithm.
     fn line_single(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
         let mut x0 = x0.round() as i32;
         let mut y0 = y0.round() as i32;
@@ -1620,6 +1956,8 @@ impl Canvas {
     }
 }
 
+/// Seeds a PRNG and generates one complete round: a city skyline and two gorilla positions.
+/// GORILLAS.BAS calls `MakeCityScape` then `PlaceGorillas` at the start of each round.
 fn make_round(seed: u64) -> (Round, [Gorilla; 2]) {
     let mut rng = SmallRng::seed_from_u64(seed);
     let round = make_cityscape_with_rng(&mut rng);
@@ -1634,6 +1972,8 @@ fn make_cityscape_with_seed(seed: u64) -> Round {
     make_cityscape_with_rng(&mut rng)
 }
 
+/// Procedurally generates the city skyline and wind speed.
+/// Direct port of GORILLAS.BAS `MakeCityScape` sub (lines 706-825).
 fn make_cityscape_with_rng(rng: &mut SmallRng) -> Round {
     let mut buildings = Vec::new();
     let slope = fn_ran(rng, 6);
@@ -1688,6 +2028,8 @@ fn make_cityscape_with_rng(rng: &mut SmallRng) -> Round {
     Round { buildings, wind }
 }
 
+/// Generates window panes for one building, each with a random lit/dark state.
+/// GORILLAS.BAS lines 784-797 in `MakeCityScape`: nested column/row loop with `FnRan(4)` test.
 fn make_windows(
     rng: &mut SmallRng,
     building_x: f32,
@@ -1713,6 +2055,8 @@ fn make_windows(
     windows
 }
 
+/// Generates a random wind speed, with an occasional strong gust.
+/// GORILLAS.BAS lines 818-823 in `MakeCityScape`: `Wind = FnRan(10) - 5`, optional gust.
 fn make_wind(rng: &mut SmallRng) -> i32 {
     let mut wind = fn_ran(rng, 10) as i32 - 5;
     if fn_ran(rng, 3) == 1 {
@@ -1726,6 +2070,8 @@ fn make_wind(rng: &mut SmallRng) -> i32 {
     wind
 }
 
+/// Picks gorilla positions on the first or second building from each edge.
+/// GORILLAS.BAS `PlaceGorillas` sub (lines 833-855).
 fn place_gorillas_with_rng(buildings: &[Building], rng: &mut SmallRng) -> [Gorilla; 2] {
     if buildings.len() < 4 {
         return [
@@ -1742,6 +2088,8 @@ fn place_gorillas_with_rng(buildings: &[Building], rng: &mut SmallRng) -> [Goril
     [left, right]
 }
 
+/// Computes the gorilla's top-left position centred on the given building.
+/// GORILLAS.BAS lines 836-848: `XAdj`/`YAdj` offsets applied to building X/top.
 fn gorilla_on(buildings: &[Building], building_index: usize) -> Gorilla {
     let building = &buildings[building_index];
     let next_x = buildings
@@ -1755,10 +2103,14 @@ fn gorilla_on(buildings: &[Building], building_index: usize) -> Gorilla {
     }
 }
 
+/// Returns a random integer in `1..=upper`, matching QBasic `FnRan(n) = INT(RND * n) + 1`.
+/// GORILLAS.BAS line 62: `DEF FnRan (x) = INT(RND * x) + 1`.
 fn fn_ran(rng: &mut SmallRng, upper: u32) -> u32 {
     rng.random_range(1..=upper)
 }
 
+/// Returns the banana's launch position relative to the throwing gorilla.
+/// GORILLAS.BAS lines 963-969: offset from gorilla X/Y to the banana release point.
 fn projectile_start(gorilla: Gorilla, player: Player) -> (f32, f32) {
     let x = match player {
         Player::One => gorilla.x,
@@ -1769,6 +2121,8 @@ fn projectile_start(gorilla: Gorilla, player: Player) -> (f32, f32) {
     (x, y)
 }
 
+/// Evaluates the banana's position and rotation at time `t` using projectile kinematics.
+/// GORILLAS.BAS lines 1006-1016: `x# = ... + .5*(Wind/5)*t#^2`, `y# = ... - .5*gravity#*t#^2`.
 fn projectile_sample(
     gorilla: Gorilla,
     angle_degrees: f32,
@@ -1795,10 +2149,14 @@ fn projectile_sample(
     }
 }
 
+/// Returns `true` while the banana is within the visible playing field.
+/// GORILLAS.BAS line 982: `IF x# > ScrWidth - 10 OR x# < 3 OR y# > ScrHeight - 3 THEN`.
 fn projectile_on_screen(x: f32, y: f32) -> bool {
     x < LOGICAL_WIDTH as f32 - 10.0 && x > 3.0 && y < LOGICAL_HEIGHT as f32 - 3.0
 }
 
+/// Samples probe pixels around the banana and classifies the result as clear, sun graze, or impact.
+/// GORILLAS.BAS `PlotShot` pixel-checking loop (lines 990-1025): `pointval = POINT(x#, y#)`.
 fn probe_projectile_collision(
     canvas: &Canvas,
     sample: ProjectileSample,
@@ -1846,6 +2204,8 @@ fn probe_projectile_collision(
     }
 }
 
+/// Determines which gorilla was hit based on horizontal position.
+/// GORILLAS.BAS lines 1028-1032: player 1 is on the left half, player 2 on the right.
 fn resolve_hit_gorilla(sample: ProjectileSample, _gorillas: &[Gorilla; 2]) -> usize {
     if sample.x < LOGICAL_WIDTH as f32 / 2.0 {
         0
@@ -1854,6 +2214,8 @@ fn resolve_hit_gorilla(sample: ProjectileSample, _gorillas: &[Gorilla; 2]) -> us
     }
 }
 
+/// Returns the pixel-offset pairs to probe for a collision, varying by throwing player.
+/// GORILLAS.BAS lines 990-1004: two `POINT` calls per frame test the banana's leading edge.
 fn probe_offsets(player: Player) -> [(f32, f32); 2] {
     match player {
         Player::One => [(8.0, 0.0), (4.0, 6.0)],
@@ -1861,19 +2223,25 @@ fn probe_offsets(player: Player) -> [(f32, f32); 2] {
     }
 }
 
+/// Returns `true` when the banana has moved far enough from the sun to clear it.
+/// GORILLAS.BAS line 997: `ABS(ScrWidth \ 2 - x#) > Scl(20) OR y# > SunHt`.
 fn projectile_left_sun(sample: ProjectileSample) -> bool {
     (LOGICAL_WIDTH as f32 * 0.5 - sample.x).abs() > SUN_CLEAR_RADIUS || sample.y > SUN_HEIGHT_LIMIT
 }
 
+/// Parses a decimal string as `f32`; returns `0.0` for empty or invalid input.
 fn parse_numeric_input(input: &str) -> f32 {
     input.parse::<f32>().unwrap_or(0.0)
 }
 
+/// Returns the 1-based column that centres `text` in an 80-column display.
 fn centered_col(text: &str) -> usize {
     let len = text.chars().count() as i32;
     (40 - (len / 2)).max(1) as usize
 }
 
+/// Renders a string at the given 1-based text row/column using the built-in 5×7 bitmap font.
+/// Replaces QBasic `LOCATE row, col: PRINT text$`.
 fn draw_text(canvas: &mut Canvas, row: usize, col: usize, text: &str, color: [f32; 4]) {
     let base_x = ((col as i32 - 1) * TEXT_CELL_WIDTH).max(0);
     let base_y = ((row as i32 - 1) * TEXT_CELL_HEIGHT).max(0);
@@ -1889,6 +2257,7 @@ fn draw_text(canvas: &mut Canvas, row: usize, col: usize, text: &str, color: [f3
     }
 }
 
+/// Renders one character glyph at pixel position `(x, y)`, doubling interior rows for readability.
 fn draw_char(canvas: &mut Canvas, x: i32, y: i32, ch: char, color: [f32; 4]) {
     let Some(rows) = glyph_rows(ch) else {
         return;
@@ -1908,6 +2277,7 @@ fn draw_char(canvas: &mut Canvas, x: i32, y: i32, ch: char, color: [f32; 4]) {
     }
 }
 
+/// Returns the 5-wide × 7-tall bitmap for `ch` as seven 5-bit row masks, or `None` if unsupported.
 fn glyph_rows(ch: char) -> Option<[u8; 7]> {
     match ch.to_ascii_uppercase() {
         ' ' => Some([0, 0, 0, 0, 0, 0, 0]),
@@ -2047,6 +2417,8 @@ fn glyph_rows(ch: char) -> Option<[u8; 7]> {
 }
 
 #[cfg(test)]
+/// Returns the expected outcome for a throw below `MIN_THROW_VELOCITY`.
+/// GORILLAS.BAS lines 963-966: `IF Velocity < 2 THEN` self-hit branch.
 fn slow_shot_outcome(velocity: f32, player: Player) -> SlowShotOutcome {
     if velocity < MIN_THROW_VELOCITY {
         SlowShotOutcome::SelfHit { player }
@@ -2055,6 +2427,8 @@ fn slow_shot_outcome(velocity: f32, player: Player) -> SlowShotOutcome {
     }
 }
 
+/// Draws all buildings and their windows onto the canvas.
+/// GORILLAS.BAS lines 761-799 in `MakeCityScape`: `LINE` calls for walls, nested window loop.
 fn draw_city(canvas: &mut Canvas, buildings: &[Building]) {
     for building in buildings {
         let y = building.top();
@@ -2076,6 +2450,8 @@ fn draw_city(canvas: &mut Canvas, buildings: &[Building]) {
     }
 }
 
+/// Draws each window pane of `building` in its lit or dark color.
+/// GORILLAS.BAS lines 784-797: `LINE (wx,wy)-(wx+WWidth,wy+WHeight),color,BF`.
 fn draw_windows(canvas: &mut Canvas, building: &Building) {
     for window in &building.windows {
         let color = if window.lit { LIT_WINDOW } else { DARK_WINDOW };
@@ -2089,10 +2465,14 @@ fn draw_windows(canvas: &mut Canvas, building: &Building) {
     }
 }
 
+/// Converts an EGA color attribute to an sRGB color for building walls.
+/// GORILLAS.BAS line 777: `BuildingColor = FnRan(3) + 4` picks attributes 5, 6, or 7.
 fn building_color(attribute: u8) -> [f32; 4] {
     palette_attribute(attribute)
 }
 
+/// Draws the wind-speed arrow at the bottom centre of the screen; no-ops when wind is zero.
+/// GORILLAS.BAS lines 875-878: `LINE` calls for the horizontal shaft and arrowhead.
 fn draw_wind(canvas: &mut Canvas, wind: i32) {
     if wind == 0 {
         return;
@@ -2109,6 +2489,8 @@ fn draw_wind(canvas: &mut Canvas, wind: i32) {
     canvas.line(end_x, y, end_x + arrow_dir, y + 2.0, 1.0, EXPLOSION);
 }
 
+/// Renders the banana sprite at `(x, y)` in the given rotation.
+/// GORILLAS.BAS `DrawBan` sub (lines 394-407): `PUT (x,y), <frame>&`.
 fn draw_banana(canvas: &mut Canvas, x: f32, y: f32, rotation: BananaRotation) {
     for (row, line) in rotation.sprite().iter().enumerate() {
         for (column, pixel) in line.bytes().enumerate() {
@@ -2119,6 +2501,9 @@ fn draw_banana(canvas: &mut Canvas, x: f32, y: f32, rotation: BananaRotation) {
     }
 }
 
+/// Draws the current animation frame for a building or gorilla explosion.
+/// Building hits: expanding ring (GORILLAS.BAS `DoExplosion`, lines 272-286).
+/// Gorilla hits: growing filled disc (GORILLAS.BAS `ExplodeGorilla`, lines 476-501).
 fn draw_explosion(canvas: &mut Canvas, explosion: Explosion, gorillas: &[Gorilla; 2]) {
     let (x, y) = explosion.center(gorillas);
     match explosion.kind {
@@ -2143,6 +2528,8 @@ fn draw_explosion(canvas: &mut Canvas, explosion: Explosion, gorillas: &[Gorilla
     }
 }
 
+/// Draws the sun with radiating lines and a face; shows an open mouth when `shocked`.
+/// GORILLAS.BAS `DoSun` sub (lines 345-385): `CIRCLE`, `LINE`, and face details.
 fn draw_sun(canvas: &mut Canvas, shocked: bool) {
     let x = LOGICAL_WIDTH as f32 * 0.5;
     let y = 25.0;
@@ -2166,6 +2553,8 @@ fn draw_sun(canvas: &mut Canvas, shocked: bool) {
     }
 }
 
+/// Draws the gorilla sprite at the given position with the specified arm pose.
+/// GORILLAS.BAS `DrawGorilla` sub (lines 416-470): body built from `LINE`/`CIRCLE`/`PAINT`.
 fn draw_gorilla(canvas: &mut Canvas, gorilla: Gorilla, arms: GorillaArms) {
     let x = gorilla.x;
     let y = gorilla.y;
@@ -2240,6 +2629,8 @@ fn draw_gorilla(canvas: &mut Canvas, gorilla: Gorilla, arms: GorillaArms) {
     }
 }
 
+/// Thin wrapper calling [`Canvas::fill_rect_inclusive`] with rounded float coordinates.
+/// Mirrors QBasic `LINE (x0,y0)-(x1,y1),color,BF` semantics used in `DrawGorilla`.
 fn basic_fill_rect(canvas: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
     canvas.fill_rect_inclusive(
         x0.round() as i32,
@@ -2250,14 +2641,18 @@ fn basic_fill_rect(canvas: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, colo
     );
 }
 
+/// Single-pixel line, matching QBasic `LINE (x0,y0)-(x1,y1),color` (no thickness, no fill).
 fn basic_line(canvas: &mut Canvas, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
     canvas.line_single(x0, y0, x1, y1, color);
 }
 
+/// Sets one pixel, matching QBasic `PSET (x, y), color`.
 fn basic_pset(canvas: &mut Canvas, x: f32, y: f32, color: [f32; 4]) {
     canvas.pixel(x.round(), y.round(), color);
 }
 
+/// Draws an arc specified in degrees, matching QBasic `CIRCLE (x,y),r,color,start,end`.
+/// Converts to radians before delegating to [`Canvas::arc`].
 fn basic_arc(
     canvas: &mut Canvas,
     x: f32,
