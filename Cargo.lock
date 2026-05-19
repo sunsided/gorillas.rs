@@ -1907,9 +1907,9 @@ dependencies = [
 
 [[package]]
 name = "synthie"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c152ebe4f99bb22dc0519baebdd7097c2763658e0392db3ed6746fd92cd3aa3"
+checksum = "dfd47a7e438fe19c5bb69481c620959f089104e64b3b2f4f132961039739ce41"
 dependencies = [
  "anyhow",
  "cpal",
