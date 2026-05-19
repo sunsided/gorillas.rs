@@ -150,7 +150,6 @@ struct GorillaIntroState {
     phase: GorillaIntroPhase,
     #[allow(dead_code)]
     player_names: [String; 2],
-    #[allow(dead_code)]
     sound_pending: bool,
 }
 
@@ -660,10 +659,17 @@ impl GameState {
                 }
                 cues
             }
-            AppScreen::ConfigMenu
-            | AppScreen::MatchOver
-            | AppScreen::PlayAgain
-            | AppScreen::GorillaIntro => vec![],
+            AppScreen::ConfigMenu | AppScreen::MatchOver | AppScreen::PlayAgain => vec![],
+            AppScreen::GorillaIntro => {
+                let mut cues = vec![];
+                if let Some(state) = self.gorilla_intro.as_mut()
+                    && state.sound_pending
+                {
+                    cues.push(crate::audio::SoundCue::GorillaIntro);
+                    state.sound_pending = false;
+                }
+                cues
+            }
             AppScreen::Playing => {
                 let update = self.game.update(dt);
                 if update.match_over.is_some() {
@@ -3571,6 +3577,59 @@ mod tests {
         assert!(
             !cues.contains(&crate::audio::SoundCue::GorillaIntro),
             "GorillaIntro cue must not fire on config submit"
+        );
+    }
+
+    #[test]
+    fn gorilla_intro_v_key_transitions_to_animation() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('v');
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert!(matches!(
+            gi.phase,
+            GorillaIntroPhase::Animation {
+                phrase: 0,
+                arm: GorillaArms::LeftUp,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn gorilla_intro_uppercase_v_also_starts_animation() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('V');
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert!(matches!(gi.phase, GorillaIntroPhase::Animation { .. }));
+    }
+
+    #[test]
+    fn gorilla_intro_v_key_sets_sound_pending() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('v');
+        assert!(state.gorilla_intro.as_ref().unwrap().sound_pending);
+    }
+
+    #[test]
+    fn gorilla_intro_update_emits_gorilla_intro_cue_when_sound_pending() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('v');
+        let cues = state.update(0.01);
+        assert!(
+            cues.contains(&crate::audio::SoundCue::GorillaIntro),
+            "expected GorillaIntro cue from update after V press, got {cues:?}"
+        );
+    }
+
+    #[test]
+    fn gorilla_intro_cue_not_emitted_twice() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('v');
+        let _ = state.update(0.01);
+        let cues = state.update(0.01);
+        assert!(
+            !cues.contains(&crate::audio::SoundCue::GorillaIntro),
+            "GorillaIntro cue must not fire on second update"
         );
     }
 
