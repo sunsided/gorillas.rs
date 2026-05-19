@@ -135,9 +135,9 @@ pub enum GorillaArms {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 enum GorillaIntroPhase {
     ChoiceMenu,
+    #[allow(dead_code)]
     Animation {
         timer: f32,
         phrase: u8,
@@ -146,10 +146,12 @@ enum GorillaIntroPhase {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 struct GorillaIntroState {
+    #[allow(dead_code)]
     phase: GorillaIntroPhase,
+    #[allow(dead_code)]
     player_names: [String; 2],
+    #[allow(dead_code)]
     sound_pending: bool,
 }
 
@@ -588,8 +590,8 @@ struct MatchOverState {
 pub enum AppScreen {
     Intro,
     ConfigMenu,
-    #[allow(dead_code)]
     GorillaIntro,
+    #[allow(dead_code)]
     Playing,
     MatchOver,
     PlayAgain,
@@ -958,11 +960,7 @@ impl GameState {
             AppScreen::GorillaIntro => vec![],
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
-                if matches!(self.screen, AppScreen::Playing) {
-                    vec![crate::audio::SoundCue::GorillaIntro]
-                } else {
-                    vec![]
-                }
+                vec![]
             }
             AppScreen::Playing => self.game.handle_submit(),
             AppScreen::MatchOver => {
@@ -1040,21 +1038,25 @@ impl GameState {
                 }
             }
             ConfigField::Gravity => {
-                if self.field_input.is_empty() {
-                    self.apply_config_and_start();
-                } else {
+                if !self.field_input.is_empty() {
                     let grav: f32 = self.field_input.parse().unwrap_or(0.0);
-                    if grav > 0.0 {
-                        self.config.gravity = grav;
-                        self.apply_config_and_start();
-                    } else {
+                    if grav <= 0.0 {
                         self.field_input.clear();
+                        return;
                     }
+                    self.config.gravity = grav;
                 }
+                self.gorilla_intro = Some(GorillaIntroState {
+                    phase: GorillaIntroPhase::ChoiceMenu,
+                    player_names: self.config.player_names.clone(),
+                    sound_pending: false,
+                });
+                self.screen = AppScreen::GorillaIntro;
             }
         }
     }
 
+    #[allow(dead_code)]
     fn apply_config_and_start(&mut self) {
         self.game.player_names = self.config.player_names.clone();
         self.game.gravity = self.config.gravity;
@@ -2889,7 +2891,6 @@ mod tests {
     fn config_full_flow_through_defaults_enters_playing() {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
-        assert!(matches!(state.screen, AppScreen::ConfigMenu));
 
         let _ = state.handle_submit();
         assert_eq!(state.active_field, ConfigField::PlayerTwoName);
@@ -2901,12 +2902,7 @@ mod tests {
         assert_eq!(state.active_field, ConfigField::Gravity);
 
         let _ = state.handle_submit();
-
-        assert_eq!(state.screen, AppScreen::Playing);
-        assert_eq!(state.game.player_names[0], "Player 1");
-        assert_eq!(state.game.player_names[1], "Player 2");
-        assert_eq!(state.config.target_score, 3);
-        assert!((state.game.gravity - 9.8).abs() < 0.001);
+        assert_eq!(state.screen, AppScreen::GorillaIntro);
     }
 
     #[test]
@@ -3071,13 +3067,13 @@ mod tests {
     }
 
     #[test]
-    fn config_empty_gravity_uses_default_and_enters_playing() {
+    fn config_empty_gravity_uses_default_and_enters_gorilla_intro() {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         state.active_field = ConfigField::Gravity;
         let _ = state.handle_submit();
         assert!((state.config.gravity - 9.8).abs() < 0.001);
-        assert_eq!(state.screen, AppScreen::Playing);
+        assert_eq!(state.screen, AppScreen::GorillaIntro);
     }
 
     #[test]
@@ -3087,7 +3083,8 @@ mod tests {
         state.active_field = ConfigField::Gravity;
         state.config.gravity = 20.0;
         let _ = state.handle_submit();
-        assert!((state.game.gravity - 20.0).abs() < 0.001);
+        assert_eq!(state.screen, AppScreen::GorillaIntro);
+        assert!((state.config.gravity - 20.0).abs() < 0.001);
     }
 
     #[test]
@@ -3098,8 +3095,10 @@ mod tests {
         state.config.player_names[1] = String::from("Bob");
         state.active_field = ConfigField::Gravity;
         let _ = state.handle_submit();
-        assert_eq!(state.game.player_names[0], "Alice");
-        assert_eq!(state.game.player_names[1], "Bob");
+        assert_eq!(state.screen, AppScreen::GorillaIntro);
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert_eq!(gi.player_names[0], "Alice");
+        assert_eq!(gi.player_names[1], "Bob");
     }
 
     #[test]
@@ -3224,18 +3223,17 @@ mod tests {
     }
 
     #[test]
-    fn game_state_handle_submit_emits_gorilla_intro_cue_when_entering_playing() {
+    fn config_submit_emits_no_gorilla_intro_cue() {
         use crate::audio::SoundCue;
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
-        // Submit through all 4 config fields (defaults); last one triggers game start
-        let _ = state.handle_submit(); // P1 name
-        let _ = state.handle_submit(); // P2 name
-        let _ = state.handle_submit(); // target score
-        let cues = state.handle_submit(); // gravity -> starts game
+        let _ = state.handle_submit();
+        let _ = state.handle_submit();
+        let _ = state.handle_submit();
+        let cues = state.handle_submit();
         assert!(
-            cues.contains(&SoundCue::GorillaIntro),
-            "expected GorillaIntro cue on game start, got {cues:?}"
+            !cues.contains(&SoundCue::GorillaIntro),
+            "GorillaIntro cue must not fire on config submit, got {cues:?}"
         );
     }
 
@@ -3532,21 +3530,47 @@ mod tests {
     }
 
     #[test]
-    fn config_to_playing_only_emits_gorilla_intro_cue() {
+    fn config_to_gorilla_intro_emits_no_cues() {
         let mut state = GameState::new();
         state.screen = AppScreen::ConfigMenu;
         let _ = state.handle_submit();
         let _ = state.handle_submit();
         let _ = state.handle_submit();
         let cues = state.handle_submit();
-        assert_eq!(state.screen, AppScreen::Playing);
+        assert_eq!(state.screen, AppScreen::GorillaIntro);
         assert!(
             !cues.contains(&crate::audio::SoundCue::Intro),
             "Intro cue must not fire here"
         );
         assert!(
-            cues.contains(&crate::audio::SoundCue::GorillaIntro),
-            "GorillaIntro cue must still fire"
+            !cues.contains(&crate::audio::SoundCue::GorillaIntro),
+            "GorillaIntro cue must not fire on config submit"
         );
+    }
+
+    fn advance_state_to_gorilla_intro() -> GameState {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        let _ = state.handle_submit(); // P1 name (default)
+        let _ = state.handle_submit(); // P2 name (default)
+        let _ = state.handle_submit(); // target score (default)
+        let _ = state.handle_submit(); // gravity (default) -> GorillaIntro
+        state
+    }
+
+    #[test]
+    fn config_submit_transitions_to_gorilla_intro() {
+        let state = advance_state_to_gorilla_intro();
+        assert_eq!(state.screen, AppScreen::GorillaIntro);
+    }
+
+    #[test]
+    fn config_submit_initializes_gorilla_intro_state() {
+        let state = advance_state_to_gorilla_intro();
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert!(matches!(gi.phase, GorillaIntroPhase::ChoiceMenu));
+        assert!(!gi.sound_pending);
+        assert_eq!(gi.player_names[0], "Player 1");
+        assert_eq!(gi.player_names[1], "Player 2");
     }
 }
