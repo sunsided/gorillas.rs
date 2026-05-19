@@ -147,7 +147,6 @@ enum GorillaIntroPhase {
 
 #[derive(Debug)]
 struct GorillaIntroState {
-    #[allow(dead_code)]
     phase: GorillaIntroPhase,
     #[allow(dead_code)]
     player_names: [String; 2],
@@ -591,7 +590,6 @@ pub enum AppScreen {
     Intro,
     ConfigMenu,
     GorillaIntro,
-    #[allow(dead_code)]
     Playing,
     MatchOver,
     PlayAgain,
@@ -919,7 +917,22 @@ impl GameState {
                 self.screen = AppScreen::ConfigMenu;
             }
             AppScreen::ConfigMenu => self.config_handle_char(ch),
-            AppScreen::GorillaIntro => {}
+            AppScreen::GorillaIntro => match ch.to_ascii_uppercase() {
+                'V' => {
+                    if let Some(state) = self.gorilla_intro.as_mut() {
+                        state.phase = GorillaIntroPhase::Animation {
+                            timer: 0.0,
+                            phrase: 0,
+                            arm: GorillaArms::LeftUp,
+                        };
+                        state.sound_pending = true;
+                    }
+                }
+                _ => {
+                    self.gorilla_intro = None;
+                    self.apply_config_and_start();
+                }
+            },
             AppScreen::Playing => self.game.handle_char(ch),
             AppScreen::MatchOver => {
                 self.match_over_state = None;
@@ -941,7 +954,10 @@ impl GameState {
             AppScreen::ConfigMenu => {
                 self.field_input.pop();
             }
-            AppScreen::GorillaIntro => {}
+            AppScreen::GorillaIntro => {
+                self.gorilla_intro = None;
+                self.apply_config_and_start();
+            }
             AppScreen::Playing => self.game.handle_backspace(),
             AppScreen::MatchOver => {
                 self.match_over_state = None;
@@ -957,7 +973,11 @@ impl GameState {
                 self.screen = AppScreen::ConfigMenu;
                 vec![]
             }
-            AppScreen::GorillaIntro => vec![],
+            AppScreen::GorillaIntro => {
+                self.gorilla_intro = None;
+                self.apply_config_and_start();
+                vec![]
+            }
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
                 vec![]
@@ -1056,7 +1076,6 @@ impl GameState {
         }
     }
 
-    #[allow(dead_code)]
     fn apply_config_and_start(&mut self) {
         self.game.player_names = self.config.player_names.clone();
         self.game.gravity = self.config.gravity;
@@ -2903,6 +2922,13 @@ mod tests {
 
         let _ = state.handle_submit();
         assert_eq!(state.screen, AppScreen::GorillaIntro);
+
+        state.handle_char('p');
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert_eq!(state.game.player_names[0], "Player 1");
+        assert_eq!(state.game.player_names[1], "Player 2");
+        assert_eq!(state.config.target_score, 3);
+        assert!((state.game.gravity - 9.8).abs() < 0.001);
     }
 
     #[test]
@@ -3546,6 +3572,54 @@ mod tests {
             !cues.contains(&crate::audio::SoundCue::GorillaIntro),
             "GorillaIntro cue must not fire on config submit"
         );
+    }
+
+    #[test]
+    fn gorilla_intro_p_key_goes_to_playing() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('p');
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert!(state.gorilla_intro.is_none());
+    }
+
+    #[test]
+    fn gorilla_intro_any_non_v_key_goes_to_playing() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('x');
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert!(state.gorilla_intro.is_none());
+    }
+
+    #[test]
+    fn gorilla_intro_submit_goes_to_playing() {
+        let mut state = advance_state_to_gorilla_intro();
+        let cues = state.handle_submit();
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert!(state.gorilla_intro.is_none());
+        assert!(cues.is_empty());
+    }
+
+    #[test]
+    fn gorilla_intro_backspace_goes_to_playing() {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_backspace();
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert!(state.gorilla_intro.is_none());
+    }
+
+    #[test]
+    fn gorilla_intro_skip_wires_config_to_game() {
+        let mut state = GameState::new();
+        state.screen = AppScreen::ConfigMenu;
+        for ch in "Alice".chars() {
+            state.handle_char(ch);
+        }
+        let _ = state.handle_submit(); // P1 -> "Alice"
+        let _ = state.handle_submit(); // P2 default
+        let _ = state.handle_submit(); // score default
+        let _ = state.handle_submit(); // gravity -> GorillaIntro
+        state.handle_char('p'); // skip to Playing
+        assert_eq!(state.game.player_names[0], "Alice");
     }
 
     fn advance_state_to_gorilla_intro() -> GameState {
