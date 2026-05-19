@@ -38,7 +38,6 @@ const VICTORY_DANCE_INTERVAL: f32 = 0.2;
 const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
-#[allow(dead_code)]
 const GORILLA_INTRO_PHRASE_DUR_S: f32 = 2.944_444;
 #[allow(dead_code)]
 const GORILLA_INTRO_X1: f32 = 265.0;
@@ -137,7 +136,6 @@ pub enum GorillaArms {
 #[derive(Debug)]
 enum GorillaIntroPhase {
     ChoiceMenu,
-    #[allow(dead_code)]
     Animation {
         timer: f32,
         phrase: u8,
@@ -662,12 +660,35 @@ impl GameState {
             AppScreen::ConfigMenu | AppScreen::MatchOver | AppScreen::PlayAgain => vec![],
             AppScreen::GorillaIntro => {
                 let mut cues = vec![];
-                if let Some(state) = self.gorilla_intro.as_mut()
-                    && state.sound_pending
-                {
-                    cues.push(crate::audio::SoundCue::GorillaIntro);
-                    state.sound_pending = false;
+                let mut advance_to_playing = false;
+
+                if let Some(state) = self.gorilla_intro.as_mut() {
+                    if state.sound_pending {
+                        cues.push(crate::audio::SoundCue::GorillaIntro);
+                        state.sound_pending = false;
+                    }
+                    if let GorillaIntroPhase::Animation { timer, phrase, arm } = &mut state.phase {
+                        *timer += dt;
+                        while *timer >= GORILLA_INTRO_PHRASE_DUR_S && *phrase < 4 {
+                            *timer -= GORILLA_INTRO_PHRASE_DUR_S;
+                            *phrase += 1;
+                            *arm = if *arm == GorillaArms::LeftUp {
+                                GorillaArms::RightUp
+                            } else {
+                                GorillaArms::LeftUp
+                            };
+                        }
+                        if *phrase >= 4 {
+                            advance_to_playing = true;
+                        }
+                    }
                 }
+
+                if advance_to_playing {
+                    self.gorilla_intro = None;
+                    self.apply_config_and_start();
+                }
+
                 cues
             }
             AppScreen::Playing => {
@@ -3689,6 +3710,68 @@ mod tests {
         let _ = state.handle_submit(); // target score (default)
         let _ = state.handle_submit(); // gravity (default) -> GorillaIntro
         state
+    }
+
+    fn advance_state_to_gorilla_intro_animation() -> GameState {
+        let mut state = advance_state_to_gorilla_intro();
+        state.handle_char('v');
+        let _ = state.update(0.01); // drain sound_pending; timer now = 0.01
+        state
+    }
+
+    #[test]
+    fn gorilla_intro_animation_starts_phrase_0_left_up() {
+        let state = advance_state_to_gorilla_intro_animation();
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert!(matches!(
+            gi.phase,
+            GorillaIntroPhase::Animation {
+                phrase: 0,
+                arm: GorillaArms::LeftUp,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn gorilla_intro_animation_advances_phrase_after_duration() {
+        let mut state = advance_state_to_gorilla_intro_animation();
+        // timer is 0.01; add enough to cross one phrase boundary
+        let _ = state.update(GORILLA_INTRO_PHRASE_DUR_S + 0.01);
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert!(matches!(
+            gi.phase,
+            GorillaIntroPhase::Animation {
+                phrase: 1,
+                arm: GorillaArms::RightUp,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn gorilla_intro_animation_toggles_arm_each_phrase() {
+        let mut state = advance_state_to_gorilla_intro_animation();
+        let _ = state.update(GORILLA_INTRO_PHRASE_DUR_S + 0.01); // phrase 0->1, LeftUp->RightUp
+        let _ = state.update(GORILLA_INTRO_PHRASE_DUR_S); // phrase 1->2, RightUp->LeftUp
+        let gi = state.gorilla_intro.as_ref().unwrap();
+        assert!(matches!(
+            gi.phase,
+            GorillaIntroPhase::Animation {
+                phrase: 2,
+                arm: GorillaArms::LeftUp,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn gorilla_intro_animation_auto_advances_to_playing_after_4_phrases() {
+        let mut state = advance_state_to_gorilla_intro_animation();
+        // One large dt drives all 4 phrase boundaries at once
+        let _ = state.update(GORILLA_INTRO_PHRASE_DUR_S * 4.0 + 0.01);
+        assert_eq!(state.screen, AppScreen::Playing);
+        assert!(state.gorilla_intro.is_none());
     }
 
     #[test]
