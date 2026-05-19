@@ -38,6 +38,14 @@ const VICTORY_DANCE_INTERVAL: f32 = 0.2;
 const VICTORY_DANCE_CYCLES: u8 = 8;
 const INTER_ROUND_DELAY: f32 = 1.0;
 const SPARKLE_FRAME_DURATION: f32 = 0.12;
+#[allow(dead_code)]
+const GORILLA_INTRO_PHRASE_DUR_S: f32 = 2.944_444;
+#[allow(dead_code)]
+const GORILLA_INTRO_X1: f32 = 265.0;
+#[allow(dead_code)]
+const GORILLA_INTRO_X2: f32 = 325.0;
+#[allow(dead_code)]
+const GORILLA_INTRO_Y: f32 = 290.0;
 const SPARKLE_COLOR: [f32; 4] = palette_attribute(4);
 const TEXT_CELL_WIDTH: i32 = 8;
 const TEXT_CELL_HEIGHT: i32 = 14;
@@ -124,6 +132,25 @@ pub enum GorillaArms {
     RightUp,
     LeftUp,
     Down,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+enum GorillaIntroPhase {
+    ChoiceMenu,
+    Animation {
+        timer: f32,
+        phrase: u8,
+        arm: GorillaArms,
+    },
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct GorillaIntroState {
+    phase: GorillaIntroPhase,
+    player_names: [String; 2],
+    sound_pending: bool,
 }
 
 #[derive(Debug)]
@@ -561,6 +588,8 @@ struct MatchOverState {
 pub enum AppScreen {
     Intro,
     ConfigMenu,
+    #[allow(dead_code)]
+    GorillaIntro,
     Playing,
     MatchOver,
     PlayAgain,
@@ -593,6 +622,7 @@ pub struct GameState {
     field_input: String,
     game: Game,
     match_over_state: Option<MatchOverState>,
+    gorilla_intro: Option<GorillaIntroState>,
     sparkle_frame: u8,
     sparkle_timer: f32,
     intro_cue_pending: bool,
@@ -608,6 +638,7 @@ impl GameState {
             field_input: String::new(),
             game: Game::new(),
             match_over_state: None,
+            gorilla_intro: None,
             sparkle_frame: 0,
             sparkle_timer: 0.0,
             intro_cue_pending: true,
@@ -629,7 +660,10 @@ impl GameState {
                 }
                 cues
             }
-            AppScreen::ConfigMenu | AppScreen::MatchOver | AppScreen::PlayAgain => vec![],
+            AppScreen::ConfigMenu
+            | AppScreen::MatchOver
+            | AppScreen::PlayAgain
+            | AppScreen::GorillaIntro => vec![],
             AppScreen::Playing => {
                 let update = self.game.update(dt);
                 if update.match_over.is_some() {
@@ -666,6 +700,12 @@ impl GameState {
                     vertices: canvas.into_vertices(),
                 }
             }
+            AppScreen::GorillaIntro => Frame {
+                logical_width: LOGICAL_WIDTH,
+                logical_height: LOGICAL_HEIGHT,
+                clear_color: BACKGROUND,
+                vertices: vec![],
+            },
             AppScreen::Playing => self.game.frame(),
             AppScreen::MatchOver => {
                 let mo = self.match_over_state.as_ref().unwrap();
@@ -877,6 +917,7 @@ impl GameState {
                 self.screen = AppScreen::ConfigMenu;
             }
             AppScreen::ConfigMenu => self.config_handle_char(ch),
+            AppScreen::GorillaIntro => {}
             AppScreen::Playing => self.game.handle_char(ch),
             AppScreen::MatchOver => {
                 self.match_over_state = None;
@@ -898,6 +939,7 @@ impl GameState {
             AppScreen::ConfigMenu => {
                 self.field_input.pop();
             }
+            AppScreen::GorillaIntro => {}
             AppScreen::Playing => self.game.handle_backspace(),
             AppScreen::MatchOver => {
                 self.match_over_state = None;
@@ -913,6 +955,7 @@ impl GameState {
                 self.screen = AppScreen::ConfigMenu;
                 vec![]
             }
+            AppScreen::GorillaIntro => vec![],
             AppScreen::ConfigMenu => {
                 self.config_handle_submit();
                 if matches!(self.screen, AppScreen::Playing) {
@@ -939,6 +982,7 @@ impl GameState {
         self.field_input.clear();
         self.game = Game::new();
         self.match_over_state = None;
+        self.gorilla_intro = None;
     }
 
     fn config_handle_char(&mut self, ch: char) {
