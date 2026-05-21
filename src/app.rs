@@ -4,13 +4,17 @@
 //! delegates rendering and input to [`App`], which drives [`game::GameState`] and
 //! [`audio::AudioScheduler`] on each frame.
 
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::{ElementState, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, NamedKey},
     window::{Window, WindowId},
 };
@@ -46,6 +50,9 @@ pub fn run() -> Result<(), AppError> {
     event_loop.run_app(&mut app).map_err(AppError::EventLoop)
 }
 
+const TARGET_FPS: u32 = 30;
+const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS as u64);
+
 /// winit [`ApplicationHandler`] that ties together the window, renderer, game state, and audio.
 struct App {
     /// The OS window; `None` until [`resumed`](App::resumed) fires.
@@ -56,6 +63,8 @@ struct App {
     game: GameState,
     /// Timestamp of the previous frame, used to compute `dt`.
     last_update: Instant,
+    /// Deadline for the next frame; used to cap at [`TARGET_FPS`].
+    next_frame: Instant,
     /// Guards against writing more than one first-frame screenshot.
     first_screenshot_taken: bool,
     /// Audio scheduler; `None` if audio initialisation failed (non-fatal).
@@ -68,11 +77,13 @@ impl App {
         let audio = AudioScheduler::new()
             .map_err(|e| eprintln!("audio init failed: {e}"))
             .ok();
+        let now = Instant::now();
         Self {
             window: None,
             renderer: None,
             game: GameState::new(),
-            last_update: Instant::now(),
+            last_update: now,
+            next_frame: now + FRAME_DURATION,
             first_screenshot_taken: false,
             audio,
         }
@@ -211,9 +222,14 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
+            let now = Instant::now();
+            if now >= self.next_frame {
+                window.request_redraw();
+                self.next_frame = now + FRAME_DURATION;
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
         }
     }
 }
