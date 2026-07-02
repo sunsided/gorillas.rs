@@ -9,10 +9,10 @@ license = "EUPL-1.2"
 [dependencies]
 anyhow = "1"
 bytemuck = { version = "1.15", features = ["derive"] }
-cpal = "0.17"
+cpal = "0.18"
 pollster = "0.4.0"
 rand = "0.10.1"
 synthie = "0.4.0"
 winit = "0.30.13"
-wgpu = "29.0.1"
+wgpu = "30.0.0"
 crossbeam-channel = "0.5.15"
