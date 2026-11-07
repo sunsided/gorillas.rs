@@ -1,27 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
-
-	/** @type {HTMLCanvasElement | undefined} */
-	let canvas = $state();
-	let status = $state('loading');
-	let error = $state('');
-
-	onMount(async () => {
-		try {
-			const wasm = await import('#lib/wasm/gorillas.js');
-			await wasm.default();
-			status = 'running';
-			canvas?.focus();
-			wasm.start('gorillas');
-		} catch (e) {
-			// winit unwinds out of its event loop setup with this exception on the web; the game
-			// keeps running.
-			const message = e instanceof Error ? e.message : String(e);
-			if (message.includes('Using exceptions for control flow')) return;
-			status = 'failed';
-			error = message;
-		}
-	});
+	import Game from '#lib/Game.svelte';
 </script>
 
 <svelte:head>
@@ -34,23 +12,8 @@
 		<p class="sub">GORILLAS.BAS (IBM, 1991), ported statement by statement to Rust</p>
 	</header>
 
-	<div class="screen">
-		<canvas
-			id="gorillas"
-			bind:this={canvas}
-			tabindex="0"
-			aria-label="QBasic Gorillas game screen"
-			onclick={() => canvas?.focus()}
-		></canvas>
-		{#if status !== 'running'}
-			<div class="overlay" role="status">
-				{#if status === 'loading'}
-					Loading…
-				{:else}
-					Could not start: {error}
-				{/if}
-			</div>
-		{/if}
+	<div class="frame">
+		<Game />
 	</div>
 
 	<section class="help">
@@ -112,28 +75,8 @@
 		color: #8a8a99;
 		font-size: 0.85rem;
 	}
-	.screen {
-		position: relative;
-		aspect-ratio: 4 / 3;
-		background: #000;
+	.frame {
 		box-shadow: 0 0 0 1px #2a2a3a;
-	}
-	canvas {
-		display: block;
-		width: 100%;
-		height: 100%;
-		outline: none;
-		touch-action: none;
-	}
-	canvas:focus-visible {
-		box-shadow: 0 0 0 2px #5555ff;
-	}
-	.overlay {
-		position: absolute;
-		inset: 0;
-		display: grid;
-		place-items: center;
-		color: #aaa;
 	}
 	.help,
 	footer {
