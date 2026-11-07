@@ -318,7 +318,10 @@ mod tests {
         // Before the device plays, only the cushion is kept, so nothing plays late.
         q.push(&vec![0.5; SpeakerQueue::MAX * 2]);
         assert_eq!(len(&q), SpeakerQueue::TARGET);
-        assert!((q.trim() - 1.0).abs() < 1e-9, "no steering before the device runs");
+        assert!(
+            (q.trim() - 1.0).abs() < 1e-9,
+            "no steering before the device runs"
+        );
 
         // Running dry re-primes the cushion on the next push.
         let mut out = vec![0.0; SpeakerQueue::TARGET + 10];
