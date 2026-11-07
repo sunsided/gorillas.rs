@@ -119,8 +119,47 @@ tasks:
       - "{{.CARGO}} clean"
 
   run:
-    desc: Run the game demo
+    desc: Play in a window (GORILLAS_CRT=0..6 picks the CRT filter, GORILLAS_SEED=n fixes the city)
     aliases:
       - example
     cmds:
-      - "{{.CARGO}} run"
+      - "{{.CARGO}} run --release"
+
+  capture:
+    desc: Run a scripted session headless (TIMELINE=..., OUT=...), writing screenshots, frames and audio
+    vars:
+      TIMELINE: '{{.TIMELINE | default "tools/dosbox/session.txt"}}'
+      OUT: '{{.OUT | default "target/capture"}}'
+    cmds:
+      - "{{.CARGO}} run --release -- capture {{.TIMELINE}} {{.OUT}} --frames"
+
+  compare:
+    desc: Play the same session in QBasic under DOSBox-X and in the port, and diff the screenshots
+    summary: |
+      Needs dosbox-x, Xvfb, xdotool, ImageMagick and ffmpeg. Downloads QBASIC.EXE from
+      Microsoft's OLDDOS.EXE (via the Internet Archive) into target/dosbox. Results in
+      target/compare. Run it on an idle machine: DOSBox at fixed cycles falls behind real
+      time under load.
+    cmds:
+      - tools/dosbox/compare.sh
+
+  web:wasm:
+    desc: Build the game for the browser into web/src/lib/wasm
+    dir: web
+    cmds:
+      - yarn install
+      - yarn wasm
+
+  web:
+    desc: Serve the web version with live reload (http://localhost:5173)
+    deps: [web:wasm]
+    dir: web
+    cmds:
+      - yarn dev
+
+  web:build:
+    desc: Build the static site into web/build (BASE_PATH=/repo for GitHub Pages)
+    deps: [web:wasm]
+    dir: web
+    cmds:
+      - yarn build
