@@ -1,265 +1,263 @@
-//! Application harness: window creation, event loop, and frame dispatch.
-//!
-//! [`run`] is the top-level entry point. It creates a [`winit`] event loop, then
-//! delegates rendering and input to [`App`], which drives [`game::GameState`] and
-//! [`audio::AudioScheduler`] on each frame.
+//! Runs the program in a game-toolkit window (or a browser canvas): steps the emulated PC in
+//! real time, shows its CRT through [`DosScreen`] and plays its PC speaker.
 
-use std::{
-    path::Path,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use winit::{
-    application::ApplicationHandler,
-    dpi::LogicalSize,
-    event::{ElementState, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{Key, NamedKey},
-    window::{Window, WindowId},
-};
+use game_toolkit_dosvideo::game_toolkit::prelude::*;
+use game_toolkit_dosvideo::{Adapter, BusTiming, Dos, DosScreen, MachineConfig};
 
-use crate::{
-    audio::{AudioScheduler, SoundCue},
-    game::{GameState, LOGICAL_HEIGHT, LOGICAL_WIDTH},
-    render::{RenderOutcome, Renderer, RendererInitError},
-};
+use crate::gorillas::{self, Options};
+use crate::qb::{Machine, Program, Qb};
 
-/// Fatal application error returned from [`run`].
-#[derive(Debug)]
-pub enum AppError {
-    /// The winit event loop failed to start or encountered an unrecoverable error.
-    EventLoop(winit::error::EventLoopError),
+/// How to run.
+#[derive(Clone, Debug, Default)]
+pub struct Config {
+    /// Web only: the `id` of the `<canvas>` to draw into.
+    pub canvas_id: Option<String>,
+    pub options: Options,
+    /// Initial CRT filter preset (0 = sharp pixels); `None` picks [`DEFAULT_CRT`].
+    pub crt: Option<usize>,
 }
 
-impl std::fmt::Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::EventLoop(error) => write!(f, "event loop failed: {error}"),
-        }
-    }
+/// The CRT filter the game starts with: the second preset of the Alt+C cycle, "soft glow"
+/// (0 is off, 1 crisp scanlines).
+pub const DEFAULT_CRT: usize = 2;
+
+static PENDING: Mutex<Option<Config>> = Mutex::new(None);
+
+/// The emulated PC: a VGA (DOSBox's default `svga_s3` behaves like one for QBasic), with
+/// video memory that costs nothing to write: QBasic's own drawing speed is in the cost model.
+pub fn machine_config() -> MachineConfig {
+    MachineConfig::new(Adapter::Vga).with_bus(BusTiming::INSTANT)
 }
 
-impl std::error::Error for AppError {}
-
-/// Creates the winit event loop and runs the game until the window is closed or the
-/// player chooses to quit. Blocks until the application exits.
-pub fn run() -> Result<(), AppError> {
-    let event_loop = EventLoop::new().map_err(AppError::EventLoop)?;
-    let mut app = App::new();
-    event_loop.run_app(&mut app).map_err(AppError::EventLoop)
+/// A fresh machine with GORILLAS.BAS loaded and running.
+pub fn boot(options: Options) -> (Rc<RefCell<Machine>>, Program) {
+    let dos = Dos::new(machine_config());
+    let m = Rc::new(RefCell::new(Machine::new(
+        dos,
+        crate::seconds_since_midnight(),
+    )));
+    let program = Program::new(gorillas::run(Qb::new(m.clone()), options));
+    (m, program)
 }
 
-const TARGET_FPS: u32 = 30;
-const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TARGET_FPS as u64);
-
-/// winit [`ApplicationHandler`] that ties together the window, renderer, game state, and audio.
-struct App {
-    /// The OS window; `None` until [`resumed`](App::resumed) fires.
-    window: Option<Arc<Window>>,
-    /// GPU renderer; `None` until the window is created.
-    renderer: Option<Renderer>,
-    /// Top-level game state machine.
-    game: GameState,
-    /// Timestamp of the previous frame, used to compute `dt`.
-    last_update: Instant,
-    /// Deadline for the next frame; used to cap at [`TARGET_FPS`].
-    next_frame: Instant,
-    /// Guards against writing more than one first-frame screenshot.
-    first_screenshot_taken: bool,
-    /// Audio scheduler; `None` if audio initialisation failed (non-fatal).
-    audio: Option<AudioScheduler>,
+/// Open the window and run.
+pub fn run(config: Config) -> Result<()> {
+    let app = AppConfig {
+        title: "QBasic Gorillas".into(),
+        width: 1024,
+        height: 768,
+        canvas_id: config.canvas_id.clone(),
+        ..Default::default()
+    };
+    *PENDING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(config);
+    game_toolkit_dosvideo::game_toolkit::prelude::run::<Runner>(app)
 }
 
-impl App {
-    /// Creates a new `App`, initialising the audio scheduler if possible.
-    fn new() -> Self {
-        let audio = AudioScheduler::new()
-            .map_err(|e| eprintln!("audio init failed: {e}"))
-            .ok();
-        let now = Instant::now();
-        Self {
-            window: None,
-            renderer: None,
-            game: GameState::new(),
-            last_update: now,
-            next_frame: now + FRAME_DURATION,
-            first_screenshot_taken: false,
-            audio,
-        }
-    }
+/// Output rate of the PC speaker.
+const AUDIO_RATE: u32 = 44_100;
 
-    /// Creates the OS window and GPU renderer on first call; no-ops on subsequent calls.
-    fn init_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), InitError> {
-        if self.window.is_some() {
-            return Ok(());
-        }
+/// PC speaker samples handed from the emulation to the audio thread.
+///
+/// The emulation runs on frame time, the sound card on its own clock. The queue keeps about
+/// [`SpeakerQueue::TARGET`] of audio in flight; [`SpeakerQueue::trim`] tells the host loop to
+/// run the machine a little faster or slower to hold it there, so the clocks stay locked
+/// instead of the queue periodically overflowing (dropped samples) or running dry (clicks).
+/// After an underrun (a long frame, a GC pause) it starts over with a full cushion.
+#[derive(Clone, Default)]
+struct SpeakerQueue(Arc<Mutex<QueueState>>);
 
-        let window = Arc::new(
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title("GORILLAS")
-                    .with_inner_size(LogicalSize::new(
-                        f64::from(LOGICAL_WIDTH),
-                        f64::from(LOGICAL_HEIGHT),
-                    ))
-                    .with_min_inner_size(LogicalSize::new(640.0, 350.0)),
-            )?,
-        );
-        let renderer = pollster::block_on(Renderer::new(Arc::clone(&window)))?;
-
-        self.window = Some(window);
-        self.renderer = Some(renderer);
-        Ok(())
-    }
+#[derive(Default)]
+struct QueueState {
+    samples: VecDeque<f32>,
+    /// Ran dry since the last push.
+    starved: bool,
+    /// The audio device has asked for samples at least once.
+    started: bool,
+    underruns: u32,
 }
 
-/// Sends a list of sound cues to the scheduler: the first cue plays immediately,
-/// subsequent cues are enqueued to play after it.
-fn dispatch_cues(audio: &mut Option<AudioScheduler>, cues: Vec<SoundCue>) {
-    if let Some(audio) = audio.as_mut() {
-        let mut iter = cues.into_iter();
-        if let Some(first) = iter.next() {
-            audio.play(first);
-        }
-        for cue in iter {
-            audio.enqueue_after(cue);
-        }
-    }
-}
+impl SpeakerQueue {
+    /// Audio kept in flight: enough to ride out a dropped frame or two.
+    const TARGET: usize = AUDIO_RATE as usize / 10;
+    /// More than this is dropped (only before the audio device starts, normally).
+    const MAX: usize = AUDIO_RATE as usize * 3 / 10;
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Err(error) = self.init_window(event_loop) {
-            eprintln!("{error}");
-            event_loop.exit();
-        }
+    fn lock(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        let Some(window) = self.window.as_ref() else {
-            return;
-        };
-        if window.id() != window_id {
-            return;
+    fn push(&self, samples: &[f32]) {
+        let mut q = self.lock();
+        if q.starved {
+            q.starved = false;
+            let pad = Self::TARGET.saturating_sub(q.samples.len());
+            q.samples.extend(std::iter::repeat_n(0.0, pad));
         }
+        q.samples.extend(samples);
+        let excess = q.samples.len().saturating_sub(Self::MAX);
+        q.samples.drain(..excess);
+    }
 
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
-                match event.logical_key {
-                    Key::Named(NamedKey::Escape) => event_loop.exit(),
-                    Key::Named(NamedKey::Backspace) => self.game.handle_backspace(),
-                    Key::Named(NamedKey::Enter) => {
-                        let cues = self.game.handle_submit();
-                        dispatch_cues(&mut self.audio, cues);
-                    }
-                    Key::Character(ref text) => {
-                        for ch in text.chars() {
-                            self.game.handle_char(ch);
-                        }
-                    }
-                    _ => {}
-                }
-                if self.game.exit_requested {
-                    event_loop.exit();
-                }
-            }
-            WindowEvent::Resized(size) => {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size);
-                }
-            }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(window.inner_size());
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    let now = Instant::now();
-                    let dt = now.duration_since(self.last_update).as_secs_f32();
-                    self.last_update = now;
-                    if let Some(audio) = self.audio.as_mut() {
-                        audio.tick();
-                    }
-
-                    let cues = self.game.update(dt);
-                    dispatch_cues(&mut self.audio, cues);
-
-                    let frame = self.game.frame();
-                    let (outcome, screenshot) = if self.first_screenshot_taken {
-                        (renderer.render(&frame), None)
-                    } else {
-                        let path = Path::new("target/screenshots/first-frame.ppm");
-                        let result = renderer.render_with_screenshot(&frame, path);
-                        self.first_screenshot_taken = true;
-                        result
-                    };
-
-                    if let Some(screenshot) = screenshot {
-                        match screenshot {
-                            Ok(path) => {
-                                eprintln!("saved first-frame screenshot to {}", path.display())
-                            }
-                            Err(error) => eprintln!("first-frame screenshot failed: {error}"),
-                        }
-                    }
-
-                    match outcome {
-                        RenderOutcome::Presented => {}
-                        RenderOutcome::NeedsReconfigure => renderer.resize(window.inner_size()),
-                        RenderOutcome::Skipped => {}
+    fn fill(&self, out: &mut [f32]) {
+        let mut q = self.lock();
+        q.started = true;
+        for o in out.iter_mut() {
+            match q.samples.pop_front() {
+                Some(v) => *o = v,
+                None => {
+                    *o = 0.0;
+                    if !q.starved {
+                        q.starved = true;
+                        q.underruns += 1;
                     }
                 }
             }
-            _ => {}
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.as_ref() {
-            let now = Instant::now();
-            if now >= self.next_frame {
-                window.request_redraw();
-                self.next_frame = now + FRAME_DURATION;
+    /// Speed factor for the emulation clock: above one when the queue runs low.
+    fn trim(&self) -> f64 {
+        let q = self.lock();
+        if !q.started {
+            return 1.0;
+        }
+        let error = (Self::TARGET as f64 - q.samples.len() as f64) / Self::TARGET as f64;
+        (1.0 + 0.05 * error).clamp(0.95, 1.05)
+    }
+
+    /// Underruns since the last call.
+    fn take_underruns(&self) -> u32 {
+        std::mem::take(&mut self.lock().underruns)
+    }
+}
+
+struct Runner {
+    options: Options,
+    machine: Rc<RefCell<Machine>>,
+    program: Program,
+    screen: DosScreen,
+    deadline: f64,
+    audio: Option<(SpeakerQueue, StreamHandle)>,
+    audio_buf: Vec<f32>,
+}
+
+fn start_speaker(ctx: &mut Context) -> Option<(SpeakerQueue, StreamHandle)> {
+    let audio = ctx.audio.as_mut()?;
+    let q = SpeakerQueue::default();
+    q.push(&vec![0.0; SpeakerQueue::TARGET]);
+    let feed = q.clone();
+    let opts = PlayOptions {
+        deferred: true,
+        ..Default::default()
+    };
+    match audio.play_stream_with(move |out: &mut [f32]| feed.fill(out), AUDIO_RATE, opts) {
+        Ok(h) => Some((q, h)),
+        Err(e) => {
+            log::warn!("PC speaker: no audio ({e})");
+            None
+        }
+    }
+}
+
+impl Game for Runner {
+    fn init(ctx: &mut Context) -> Result<Self> {
+        let config = PENDING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .unwrap_or_default();
+        let (machine, program) = boot(config.options);
+        let mut screen = DosScreen::new();
+        screen.set_crt_preset(config.crt.unwrap_or(DEFAULT_CRT));
+        screen.upload(&mut ctx.gfx, &machine.borrow().dos);
+        let deadline = machine.borrow().dos.now_ns();
+        Ok(Self {
+            options: config.options,
+            machine,
+            program,
+            screen,
+            deadline,
+            audio: start_speaker(ctx),
+            audio_buf: Vec::new(),
+        })
+    }
+
+    fn update(&mut self, ctx: &mut Context, dt: f32) {
+        let alt = ctx.input.key_held(Key::AltLeft) || ctx.input.key_held(Key::AltRight);
+        if alt && ctx.input.key_pressed(Key::KeyC) {
+            self.screen.cycle_crt();
+        } else if alt && ctx.input.key_pressed(Key::Enter) {
+            let fs = ctx.window.fullscreen().is_some();
+            ctx.window
+                .set_fullscreen((!fs).then_some(winit::window::Fullscreen::Borderless(None)));
+        } else {
+            let size = ctx.gfx.size();
+            self.screen
+                .feed_input(&ctx.input, &mut self.machine.borrow_mut().dos, size);
+        }
+
+        let trim = self.audio.as_ref().map_or(1.0, |(q, _)| q.trim());
+        self.deadline += f64::from(dt.clamp(0.0, 0.1)) * 1e9 * trim;
+        let mut steps = 0;
+        while self.machine.borrow().dos.now_ns() < self.deadline && steps < 5000 {
+            steps += 1;
+            if self.program.step() {
+                // END: QBasic would drop back into its editor. Close the window natively;
+                // on the web, start over.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ctx.quit();
+                    return;
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let (machine, program) = boot(self.options);
+                    self.machine = machine;
+                    self.program = program;
+                    self.deadline = self.machine.borrow().dos.now_ns();
+                    break;
+                }
             }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+        }
+        let _ = self.options;
+        let mut m = self.machine.borrow_mut();
+        if let Some((q, _)) = &self.audio {
+            self.audio_buf.clear();
+            m.dos.speaker_render(AUDIO_RATE, &mut self.audio_buf);
+            q.push(&self.audio_buf);
+            let underruns = q.take_underruns();
+            if underruns > 0 {
+                log::debug!("PC speaker: {underruns} underrun(s)");
+            }
+        } else {
+            m.dos.speaker_skip();
+        }
+        let now = m.dos.now_ns();
+        if (self.deadline - now).abs() > 0.25e9 {
+            self.deadline = now;
         }
     }
-}
 
-/// Error that can occur while creating the window or renderer during [`App::init_window`].
-#[derive(Debug)]
-enum InitError {
-    /// OS-level window creation failed.
-    Window(winit::error::OsError),
-    /// wgpu surface or device initialisation failed.
-    Renderer(RendererInitError),
-}
-
-impl std::fmt::Display for InitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Window(error) => write!(f, "window creation failed: {error}"),
-            Self::Renderer(error) => write!(f, "renderer initialization failed: {error}"),
+    fn render(&mut self, ctx: &mut Context, frame: &mut Frame) {
+        let mut m = self.machine.borrow_mut();
+        m.flush();
+        m.dos.sync();
+        self.screen.upload(&mut ctx.gfx, &m.dos);
+        let size = ctx.gfx.size();
+        {
+            let mut p = frame.painter(&mut ctx.gfx);
+            p.clear([0.0, 0.0, 0.0, 1.0]);
+            self.screen.draw(&mut p, &m.dos, size);
         }
-    }
-}
-
-impl From<winit::error::OsError> for InitError {
-    fn from(value: winit::error::OsError) -> Self {
-        Self::Window(value)
-    }
-}
-
-impl From<RendererInitError> for InitError {
-    fn from(value: RendererInitError) -> Self {
-        Self::Renderer(value)
+        self.screen.draw_crt(&ctx.gfx, frame);
     }
 }
