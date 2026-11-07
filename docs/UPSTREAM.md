@@ -12,6 +12,14 @@ Things the Gorillas port had to build or work around that belong in
 - **`Font::vga()` differs from the IBM 8x16 ROM font in a few glyphs** (the apostrophe, for
   one). The port loads DOSBox's dump (`fonts/vga8x16.bin`) into text mode. Shipping the
   ROM fonts (license permitting) would make text mode exact.
+- **Lopsided overscan border on VGA.** The border comes straight from the CRTC: blanking
+  starts at `h_blank_start` and ends at `h_blank_end`. With the BIOS values for mode 10h
+  (CR02 = 0x50 right after the 80 displayed characters, blank end at character 98 of 100)
+  that is 16 dots of border on the left and none on the right (mode 03h: 18 and 0), so the
+  picture sits visibly off-center. A real VGA shows about 8 dots on each side: blanking runs
+  through the pipeline a character later than the counter compare (VESA's 640x480 timing has
+  8-pixel borders left and right). Delaying the derived blanking by one character clock would
+  match.
 - **Numpad with NumLock.** `KEYMAP` always maps numpad keys to the navigation scancodes with
   ASCII 0. GORILLAS.BAS turns NumLock on and expects digits from the keypad. The keyboard
   could track NumLock (and the BIOS flag at `0040:0017`) and produce digits.

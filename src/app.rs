@@ -177,6 +177,8 @@ impl Game for Runner {
             .unwrap_or_default();
         let (machine, program) = boot(config.options);
         let mut screen = DosScreen::new();
+        // Like DOSBox: no overscan border (dosvideo derives a lopsided one, see docs/UPSTREAM.md).
+        screen.show_border = false;
         screen.set_crt_preset(config.crt.unwrap_or(DEFAULT_CRT));
         screen.upload(&mut ctx.gfx, &machine.borrow().dos);
         let deadline = machine.borrow().dos.now_ns();
