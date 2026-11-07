@@ -113,6 +113,17 @@ tasks:
       - test:all-features
       - test:no-features
 
+  lint:actions:
+    desc: Lint the GitHub workflows (actionlint, zizmor)
+    preconditions:
+      - sh: command -v actionlint
+        msg: "actionlint not found - go install github.com/rhysd/actionlint/cmd/actionlint@latest"
+      - sh: command -v zizmor
+        msg: "zizmor not found - pipx install zizmor (or: cargo install zizmor)"
+    cmds:
+      - actionlint -color
+      - zizmor --format plain .github
+
   clean:
     desc: Remove Cargo build artifacts
     cmds:
