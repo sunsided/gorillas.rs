@@ -71,4 +71,5 @@ game-toolkit-dosvideo.
 
 EUPL-1.2, except the font files in [`fonts/`](fonts): the VGA BIOS character sets as DOSBox-X
 provides them, dumped through the `INT 43h` vector, under GPL-2.0-or-later (see
-[`fonts/README.md`](fonts/README.md)).
+[`fonts/README.md`](fonts/README.md)). The binaries embed those fonts, so the crate as a whole is
+`EUPL-1.2 AND GPL-2.0-or-later`.
