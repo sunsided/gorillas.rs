@@ -1,0 +1,12 @@
+SCREEN 12
+DEF SEG = 0
+o& = PEEK(&H10C) + 256& * PEEK(&H10D)
+s& = PEEK(&H10E) + 256& * PEEK(&H10F)
+DEF SEG = s&
+OPEN "F16.BIN" FOR BINARY AS #1
+FOR i& = 0 TO 4095
+b$ = CHR$(PEEK(o& + i&))
+PUT #1, , b$
+NEXT
+CLOSE #1
+SYSTEM
