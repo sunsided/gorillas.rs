@@ -28,6 +28,18 @@ pub struct Sprite {
 }
 
 impl Sprite {
+    /// A picture from rows of hex digits (one color per pixel), `.` or space for color 0.
+    pub fn from_art(rows: &[&str]) -> Self {
+        let h = rows.len() as i32;
+        let w = rows.first().map_or(0, |r| r.len()) as i32;
+        let pix = rows
+            .iter()
+            .flat_map(|r| r.chars())
+            .map(|c| c.to_digit(16).unwrap_or(0) as u8)
+            .collect();
+        Self { w, h, pix }
+    }
+
     /// Decode an EGA `GET` array stored as `LONG`s (as in GORILLAS.BAS's `DATA` lines): a
     /// header word with the width and one with the height, then per row the four planes, each
     /// padded to whole bytes, most significant bit leftmost.

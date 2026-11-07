@@ -22,50 +22,42 @@ const RIGHTUP: i32 = 1;
 const LEFTUP: i32 = 2;
 const ARMSDOWN: i32 = 3;
 
-/// `EGABanana:` `DATA` lines: the four banana pictures as EGA `GET` arrays.
-const BANANA_LEFT: [i32; 9] = [
-    458_758,
-    202_116_096,
-    471_604_224,
-    943_208_448,
-    943_208_448,
-    943_208_448,
-    471_604_224,
-    202_116_096,
-    0,
+/// `EGABanana:` the four banana pictures, one hex digit per pixel (the color), `.` for 0.
+/// GORILLAS.BAS stores them as EGA `GET` arrays in `DATA` lines; the test below checks the art
+/// against those.
+#[rustfmt::skip]
+const BANANA_LEFT: &[&str] = &[
+    "....EE",
+    "...EEE",
+    "..EEE.",
+    "..EEE.",
+    "..EEE.",
+    "...EEE",
+    "....EE",
 ];
-const BANANA_DOWN: [i32; 9] = [
-    262_153,
-    -2_134_835_200,
-    -2_134_802_239,
-    -2_130_771_968,
-    -2_130_738_945,
-    8_323_072,
-    8_323_199,
-    4_063_232,
-    4_063_294,
+#[rustfmt::skip]
+const BANANA_DOWN: &[&str] = &[
+    "EE.....EE",
+    "EEEEEEEEE",
+    ".EEEEEEE.",
+    "..EEEEE..",
 ];
-const BANANA_UP: [i32; 9] = [
-    262_153,
-    4_063_232,
-    4_063_294,
-    8_323_072,
-    8_323_199,
-    -2_130_771_968,
-    -2_130_738_945,
-    -2_134_835_200,
-    -2_134_802_239,
+#[rustfmt::skip]
+const BANANA_UP: &[&str] = &[
+    "..EEEEE..",
+    ".EEEEEEE.",
+    "EEEEEEEEE",
+    "EE.....EE",
 ];
-const BANANA_RIGHT: [i32; 9] = [
-    458_758,
-    -1_061_109_760,
-    -522_133_504,
-    1_886_416_896,
-    1_886_416_896,
-    1_886_416_896,
-    -522_133_504,
-    -1_061_109_760,
-    0,
+#[rustfmt::skip]
+const BANANA_RIGHT: &[&str] = &[
+    "EE....",
+    "EEE...",
+    ".EEE..",
+    ".EEE..",
+    ".EEE..",
+    "EEE...",
+    "EE....",
 ];
 
 /// How to run the program.
@@ -239,10 +231,10 @@ impl Gorillas {
         self.scr_width = 640;
         self.scr_height = 350;
         self.g_height = 25;
-        self.lban = Sprite::from_ega_longs(&BANANA_LEFT);
-        self.dban = Sprite::from_ega_longs(&BANANA_DOWN);
-        self.uban = Sprite::from_ega_longs(&BANANA_UP);
-        self.rban = Sprite::from_ega_longs(&BANANA_RIGHT);
+        self.lban = Sprite::from_art(BANANA_LEFT);
+        self.dban = Sprite::from_art(BANANA_DOWN);
+        self.uban = Sprite::from_art(BANANA_UP);
+        self.rban = Sprite::from_art(BANANA_RIGHT);
         self.sun_ht = 39;
     }
 
@@ -1261,6 +1253,71 @@ mod tests {
         assert_eq!(val(""), 0.0);
         assert_eq!(val("abc"), 0.0);
         assert_eq!(val("-3"), -3.0);
+    }
+
+    #[test]
+    fn banana_art_matches_the_data_lines() {
+        // EGABanana: in GORILLAS.BAS.
+        let banana_left: [i32; 9] = [
+            458_758,
+            202_116_096,
+            471_604_224,
+            943_208_448,
+            943_208_448,
+            943_208_448,
+            471_604_224,
+            202_116_096,
+            0,
+        ];
+        let banana_down: [i32; 9] = [
+            262_153,
+            -2_134_835_200,
+            -2_134_802_239,
+            -2_130_771_968,
+            -2_130_738_945,
+            8_323_072,
+            8_323_199,
+            4_063_232,
+            4_063_294,
+        ];
+        let banana_up: [i32; 9] = [
+            262_153,
+            4_063_232,
+            4_063_294,
+            8_323_072,
+            8_323_199,
+            -2_130_771_968,
+            -2_130_738_945,
+            -2_134_835_200,
+            -2_134_802_239,
+        ];
+        let banana_right: [i32; 9] = [
+            458_758,
+            -1_061_109_760,
+            -522_133_504,
+            1_886_416_896,
+            1_886_416_896,
+            1_886_416_896,
+            -522_133_504,
+            -1_061_109_760,
+            0,
+        ];
+        assert_eq!(
+            Sprite::from_art(BANANA_LEFT),
+            Sprite::from_ega_longs(&banana_left)
+        );
+        assert_eq!(
+            Sprite::from_art(BANANA_DOWN),
+            Sprite::from_ega_longs(&banana_down)
+        );
+        assert_eq!(
+            Sprite::from_art(BANANA_UP),
+            Sprite::from_ega_longs(&banana_up)
+        );
+        assert_eq!(
+            Sprite::from_art(BANANA_RIGHT),
+            Sprite::from_ega_longs(&banana_right)
+        );
     }
 
     #[test]
