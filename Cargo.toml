@@ -1,18 +1,33 @@
 [package]
 name = "gorillas"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 authors = ["Markus Mayer <widemeadows@gmail.com>"]
-license = "EUPL-1.2"
+license = "EUPL-1.2 AND GPL-2.0-or-later"
+description = "QBasic GORILLAS.BAS, ported statement by statement onto an emulated EGA/VGA card and PC speaker"
+repository = "https://github.com/sunsided/gorillas.rs"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "gorillas"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-bytemuck = { version = "1.15", features = ["derive"] }
-cpal = "0.17"
-pollster = "0.4.0"
-rand = "0.10.1"
-synthie = "0.4.0"
-winit = "0.30.13"
-wgpu = "29.0.1"
-crossbeam-channel = "0.5.15"
+log = "0.4"
+game-toolkit-dosvideo = "0.2.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

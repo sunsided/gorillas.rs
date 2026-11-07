@@ -1,0 +1,23 @@
+{
+	"name": "gorillas-web",
+	"private": true,
+	"version": "0.2.0",
+	"type": "module",
+	"packageManager": "yarn@4.18.1",
+	"imports": {
+		"#lib/*": "./src/lib/*"
+	},
+	"scripts": {
+		"wasm": "cd .. && wasm-pack build --target web --release --out-dir web/src/lib/wasm --out-name gorillas --no-typescript --no-pack",
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-static": "^4.0.1",
+		"@sveltejs/kit": "^3.1.1",
+		"@sveltejs/vite-plugin-svelte": "^7.3.1",
+		"svelte": "^5.57.3",
+		"vite": "^8.3.6"
+	}
+}
