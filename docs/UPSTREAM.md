@@ -53,6 +53,12 @@ Things the Gorillas port had to build or work around that belong in
   in a page (SvelteKit) needs `AppConfig::canvas_id`. The port has its own runner because of
   this, copying the private `SpeakerQueue` / `start_speaker` from `host.rs`. Either add
   `canvas_id` to `DosConfig` or make the speaker queue public.
+- **Sound that starts late on the web.** A DOS program plays its intro music in the first
+  second, before the toolkit's autoplay probe (up to 1.5 s) or the first click has started
+  the audio, so it is lost; and before audio starts, `SpeakerQueue` fills up to its maximum,
+  which then plays late. The port's runner holds the machine's power switch until the audio
+  runs or the probe window has passed, keeps only the cushion until the device plays, and
+  restarts the queue on `GameEvent::CanvasAttached(true)`. `Runner` could do the same.
 - **Blocking programs.** The port runs the BASIC program as an `async fn` polled from the
   host loop (`src/qb/exec.rs`), so code can be written like DOS code (busy waits, `INKEY$`
   loops) without a thread. A `DosProgram` variant of `DosGame` taking an `async` closure would

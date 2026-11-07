@@ -61,6 +61,10 @@ task web:build    # static site in web/build
 ```
 
 GitHub Pages deploys from `main` through [`.github/workflows/pages.yml`](.github/workflows/pages.yml).
+A version tag (`v1.2.3`) builds the Linux binary and the web zip, attests both and publishes a
+release ([`.github/workflows/release.yml`](.github/workflows/release.yml)), then announces it
+to [games.markusmayer.dev](https://games.markusmayer.dev), which frames `play.html`, the game
+without the page around it.
 
 ## Notes
 
