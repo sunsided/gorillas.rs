@@ -103,7 +103,9 @@ impl SpeakerQueue {
             q.samples.extend(std::iter::repeat_n(0.0, pad));
         }
         q.samples.extend(samples);
-        let excess = q.samples.len().saturating_sub(Self::MAX);
+        // Until the device plays, keep only the cushion: whatever plays first must be now.
+        let max = if q.started { Self::MAX } else { Self::TARGET };
+        let excess = q.samples.len().saturating_sub(max);
         q.samples.drain(..excess);
     }
 
@@ -134,6 +136,14 @@ impl SpeakerQueue {
         (1.0 + 0.05 * error).clamp(0.95, 1.05)
     }
 
+    /// Drop what is queued and start over with a fresh cushion: after the canvas was off the
+    /// page, the queue holds audio from before, which would only play late.
+    fn restart(&self) {
+        let mut q = self.lock();
+        q.samples.clear();
+        q.starved = true;
+    }
+
     /// Underruns since the last call.
     fn take_underruns(&self) -> u32 {
         std::mem::take(&mut self.lock().underruns)
@@ -148,7 +158,14 @@ struct Runner {
     deadline: f64,
     audio: Option<(SpeakerQueue, StreamHandle)>,
     audio_buf: Vec<f32>,
+    /// Seconds waited for the sound before powering on, `None` once the machine runs.
+    power_on_wait: Option<f32>,
 }
+
+/// How long to hold the power switch for the sound: on the web the toolkit asks the browser
+/// whether audio may start without a click on the canvas, which takes up to 1.5 s. Waiting
+/// that long lets the intro tune play when the player already clicked on the host page.
+const POWER_ON_WAIT: f32 = 1.6;
 
 fn start_speaker(ctx: &mut Context) -> Option<(SpeakerQueue, StreamHandle)> {
     let audio = ctx.audio.as_mut()?;
@@ -190,6 +207,7 @@ impl Game for Runner {
             deadline,
             audio: start_speaker(ctx),
             audio_buf: Vec::new(),
+            power_on_wait: Some(0.0),
         })
     }
 
@@ -205,6 +223,16 @@ impl Game for Runner {
             let size = ctx.gfx.size();
             self.screen
                 .feed_input(&ctx.input, &mut self.machine.borrow_mut().dos, size);
+        }
+
+        if let Some(waited) = &mut self.power_on_wait {
+            *waited += dt;
+            let sound = ctx.audio.as_ref().is_none_or(|a| a.is_started());
+            if !sound && *waited < POWER_ON_WAIT {
+                return;
+            }
+            self.power_on_wait = None;
+            self.deadline = self.machine.borrow().dos.now_ns();
         }
 
         let trim = self.audio.as_ref().map_or(1.0, |(q, _)| q.trim());
@@ -249,6 +277,18 @@ impl Game for Runner {
         }
     }
 
+    /// The host page put the canvas back after taking it off: the toolkit kept the audio
+    /// suspended meanwhile and the emulation got no frames, so start the speaker afresh and
+    /// don't let the machine race to catch up.
+    fn event(&mut self, _ctx: &mut Context, e: &GameEvent) {
+        if let GameEvent::CanvasAttached(true) = e {
+            if let Some((q, _)) = &self.audio {
+                q.restart();
+            }
+            self.deadline = self.machine.borrow().dos.now_ns();
+        }
+    }
+
     fn render(&mut self, ctx: &mut Context, frame: &mut Frame) {
         let mut m = self.machine.borrow_mut();
         m.flush();
@@ -261,5 +301,40 @@ impl Game for Runner {
             self.screen.draw(&mut p, &m.dos, size);
         }
         self.screen.draw_crt(&ctx.gfx, frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn len(q: &SpeakerQueue) -> usize {
+        q.lock().samples.len()
+    }
+
+    #[test]
+    fn speaker_queue_keeps_a_cushion() {
+        let q = SpeakerQueue::default();
+        // Before the device plays, only the cushion is kept, so nothing plays late.
+        q.push(&vec![0.5; SpeakerQueue::MAX * 2]);
+        assert_eq!(len(&q), SpeakerQueue::TARGET);
+        assert!((q.trim() - 1.0).abs() < 1e-9, "no steering before the device runs");
+
+        // Running dry re-primes the cushion on the next push.
+        let mut out = vec![0.0; SpeakerQueue::TARGET + 10];
+        q.fill(&mut out);
+        assert_eq!(q.take_underruns(), 1);
+        q.push(&[0.5; 10]);
+        assert_eq!(len(&q), SpeakerQueue::TARGET + 10);
+
+        // A running device steers the emulation clock by the fill level.
+        assert!((q.trim() - 1.0).abs() < 0.01);
+        q.push(&vec![0.5; SpeakerQueue::TARGET]);
+        assert!(q.trim() < 1.0, "too full: run the machine slower");
+
+        // Back on the page: stale audio is dropped and the cushion rebuilt.
+        q.restart();
+        q.push(&[0.5; 10]);
+        assert_eq!(len(&q), SpeakerQueue::TARGET + 10);
     }
 }
