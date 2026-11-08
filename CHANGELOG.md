@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The EUPL-1.2 licence text (`LICENSE`), shipped in the Linux archive and the web build.
+- Release notes come from this changelog; releases are cut with `task release` (cargo-release).
+
 ### Changed
 
 - Licensed as EUPL-1.2 only again: the VGA fonts are game-toolkit-dosvideo 0.2.2's built-in
