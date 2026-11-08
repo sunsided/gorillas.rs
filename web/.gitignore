@@ -4,5 +4,3 @@ build/
 .yarn/*
 !.yarn/releases
 src/lib/wasm/
-# Copied from ../fonts at build time: the fonts' notice ships with the site.
-static/fntcol16-COPYLEFT.TXT

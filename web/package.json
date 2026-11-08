@@ -10,7 +10,7 @@
 	"scripts": {
 		"wasm": "cd .. && wasm-pack build --target web --release --out-dir web/src/lib/wasm --out-name gorillas --no-typescript --no-pack",
 		"dev": "vite dev",
-		"build": "cp ../fonts/fntcol16-COPYLEFT.TXT static/ && vite build",
+		"build": "vite build",
 		"preview": "vite preview"
 	},
 	"devDependencies": {

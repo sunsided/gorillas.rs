@@ -783,9 +783,9 @@ dependencies = [
 
 [[package]]
 name = "game-toolkit-dosvideo"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3537324bb887bb9bdcdb2ff72b0a36cc74e20e194ea40caae2978758e2995661"
+checksum = "39a816268090df4e9fe7df4136d41f961240375225e3d3dfe5a0cb24abaf53bd"
 dependencies = [
  "game-toolkit",
 ]

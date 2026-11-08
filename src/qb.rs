@@ -27,14 +27,6 @@ use gfx::{Ega, H, Put, SCREEN9_ASPECT, Sprite, W};
 use play::{Music, Note, QUEUE_NOTES, Speaker};
 use rnd::Rnd;
 
-/// The VGA 8x16 character set: fntcol16's `VGA-ROM.F16` (public domain, see fonts/README.md),
-/// loaded into text mode in place of `Font::vga()`. It differs from DOSBox's in 19 glyphs.
-static TEXT_FONT: std::sync::LazyLock<game_toolkit_dosvideo::Font> =
-    std::sync::LazyLock::new(|| {
-        game_toolkit_dosvideo::Font::from_raw(16, include_bytes!("../fonts/vga8x16.bin"))
-            .expect("4096 bytes of 8x16 glyphs")
-    });
-
 /// `TRUE` in BASIC.
 pub const TRUE: i32 = -1;
 /// `FALSE` in BASIC.
@@ -320,9 +312,6 @@ impl Qb {
                 Mode::Text => 0x03,
                 Mode::Ega => 0x10,
             });
-            if mode == Mode::Text {
-                m.dos.load_font(&TEXT_FONT, 0);
-            }
             m.dos.hide_cursor();
             m.ega = Ega::new();
             m.row = 1;

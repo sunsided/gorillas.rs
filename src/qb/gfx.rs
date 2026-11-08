@@ -10,10 +10,7 @@
 //! The shadow copy holds one color index per pixel; the runtime copies changed rows into the
 //! emulated EGA planes before time passes.
 
-/// The 8x14 character set the VGA BIOS uses in 350-line graphics modes: fntcol16's
-/// `VGA-ROM.F14` (public domain, see fonts/README.md), the same bytes DOSBox's BIOS uses. It
-/// differs from `Font::ega()` in glyph shapes and baseline.
-static FONT_8X14: &[u8; 3584] = include_bytes!("../../fonts/vga8x14.bin");
+use game_toolkit_dosvideo::Font;
 
 /// Screen width in pixels.
 pub const W: i32 = 640;
@@ -460,7 +457,8 @@ impl Ega {
     /// Draw one character cell of text (8x14, 1-based row and column), like `PRINT` does in
     /// `SCREEN 9`: foreground on a background-colored cell.
     pub fn glyph(&mut self, row: i32, col: i32, ch: u8, fg: u8, bg: u8) {
-        let g = &FONT_8X14[ch as usize * 14..ch as usize * 14 + 14];
+        // The VGA BIOS 8x14 set (fntcol16's public-domain VGA-ROM.F14, the bytes DOSBox uses).
+        let g = Font::ega().glyph(ch);
         let (x0, y0) = ((col - 1) * 8, (row - 1) * 14);
         for (r, bits) in g.iter().enumerate().take(14) {
             for b in 0..8 {
