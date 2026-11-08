@@ -170,9 +170,7 @@ jobs:
     needs: [release]
     permissions: {}
     # Runs in this repository's `games` environment (limited to v* tags), which holds the
-    # announce app's GAMES_ANNOUNCE_APP_PRIVATE_KEY; nothing is passed from here. Pinned to a
-    # commit of the site's main, which moves on with every registry merge, so the comment
-    # can't match it.
-    uses: sunsided/games.markusmayer.dev/.github/workflows/announce.yml@28c7b97a777df52684ab39cbc3739272066aa9d3 # main zizmor: ignore[ref-version-mismatch]
+    # announce app's GAMES_ANNOUNCE_APP_PRIVATE_KEY; nothing is passed from here.
+    uses: sunsided/games.markusmayer.dev/.github/workflows/announce.yml@1a9fcc9797ccb7d395e141f93e43f9fefdc33cdd # announce-v1.1.0
     with:
       app-id: ${{ vars.GAMES_ANNOUNCE_APP_ID }}
