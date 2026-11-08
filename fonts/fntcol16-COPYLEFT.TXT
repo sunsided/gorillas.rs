@@ -67,9 +67,9 @@ Permanent mailing address  is:
 
 Hebrew  mailing address  (you  cannot  read  the  following  unless
 your screen adapter can display Hebrew character):
-                           Å’â€°â€š â€°â€˜â€¦â€°
-                           3148 .Æ’.Å¡
-                            Ââ€°Å’â„¢â€¦Ëœâ€°
+                           Œ‰‚ ‰‘…‰
+                           3148 .ƒ.š
+                            ‰Œ™…˜‰
 
 --------------------------------------------------------------------------
 From comp.fonts Sat Sep  5 11:12:35 1992
