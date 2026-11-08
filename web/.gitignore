@@ -4,3 +4,5 @@ build/
 .yarn/*
 !.yarn/releases
 src/lib/wasm/
+# Copied from ../LICENSE at build time, so the site ships the licence text.
+static/LICENSE.txt

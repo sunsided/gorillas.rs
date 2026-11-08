@@ -75,5 +75,5 @@ game-toolkit-dosvideo.
 
 ## License
 
-EUPL-1.2. The VGA fonts are game-toolkit-dosvideo's built-in ones, from Joseph Gil's
+[EUPL-1.2](LICENSE). The VGA fonts are game-toolkit-dosvideo's built-in ones, from Joseph Gil's
 public-domain fntcol16 collection; its notice ships with that crate.
