@@ -47,7 +47,7 @@ jobs:
           name="gorillas-${GITHUB_REF_NAME}-linux-x86_64"
           mkdir -p "pkg/$name/fonts"
           cp target/release/gorillas README.md GORILLAS.BAS "pkg/$name/"
-          cp fonts/README.md "pkg/$name/fonts/"
+          cp fonts/README.md fonts/fntcol16-COPYLEFT.TXT "pkg/$name/fonts/"
           tar -C pkg -czf "$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
