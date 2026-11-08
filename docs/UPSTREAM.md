@@ -28,11 +28,12 @@ Things the Gorillas port had to build or work around that belong in
 
 - **QBasic `PLAY` semantics** (`src/qb/play.rs`): `Melody` ignores `MB`/`MF`, resets octave,
   length and tempo per string and has no queue. QBasic keeps that state across `PLAY`
-  statements, queues up to 32 notes in the background and blocks when full, and plays `MF`
-  in the foreground. `N0` is a rest. A `Music` type with this behavior could sit next to
+  statements, queues notes in the background and blocks when the queue is full (it holds
+  about 24 notes in DOSBox, not the documented 32), and in `MF` returns once its last note
+  has started. `N0` is a rest. A `Music` type with this behavior could sit next to
   `Melody`.
 - **GW-BASIC/QBasic drawing primitives** (`src/qb/gfx.rs`): `LINE` (drawn from the first
-  point, error term starting at `major - minor/2`), `CIRCLE` (GW-BASIC half-pixel algorithm,
+  point, error term starting at `3 * major / 4`, fitted to QBasic's output), `CIRCLE` (GW-BASIC half-pixel algorithm,
   8.8 fixed-point aspect, arcs by point count, negative angles draw radii), `PAINT`, and EGA
   planar `GET`/`PUT` arrays (decoding the `DATA` format). `Bitmap::line`/`circle` don't match
   BASIC pixel for pixel; a `basic` drawing module would help any BASIC port.
