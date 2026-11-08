@@ -68,11 +68,6 @@ release ([`.github/workflows/release.yml`](.github/workflows/release.yml)), then
 to [games.markusmayer.dev](https://games.markusmayer.dev), which frames `play.html`, the game
 without the page around it.
 
-## Notes
-
-[`docs/UPSTREAM.md`](docs/UPSTREAM.md) collects what this port had to build that belongs in
-game-toolkit-dosvideo.
-
 ## License
 
 [EUPL-1.2](LICENSE). The VGA fonts are game-toolkit-dosvideo's built-in ones, from Joseph Gil's
