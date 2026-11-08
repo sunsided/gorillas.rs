@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-08
+
 ### Added
 
 - The EUPL-1.2 licence text (`LICENSE`), shipped in the Linux archive and the web build.
@@ -38,5 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `gorillas capture`: scripted headless sessions with screenshots, frames and WAV output, and a
   DOSBox-X comparison against the original (`task compare`).
 
-[Unreleased]: https://github.com/sunsided/gorillas.rs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sunsided/gorillas.rs/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/sunsided/gorillas.rs/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/sunsided/gorillas.rs/releases/tag/v0.2.0
