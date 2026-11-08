@@ -23,7 +23,8 @@ uses, quirks included:
   same city, wind and gorilla positions as QBasic.
 - `PLAY` keeps tempo, octave and length from one statement to the next, buffers background
   music and blocks when the buffer is full, which is what paces the gorilla intro dance.
-- Text uses the VGA BIOS fonts, 8x14 in `SCREEN 9` and 8x16 in text mode.
+- Text uses VGA ROM fonts, 8x14 in `SCREEN 9` and 8x16 in text mode, from the public-domain
+  fntcol16 collection.
 - Time is the emulated machine's: `Rest` busy-waits on the 18.2 Hz `TIMER` like the original,
   calibrated against QBasic 1.1 in DOSBox-X at 3000 cycles.
 
@@ -34,9 +35,11 @@ The program runs as an `async fn` polled by the host loop, so BASIC's blocking l
 
 [`tools/dosbox`](tools/dosbox) plays the same scripted session in QBasic under DOSBox-X and in
 the port (`task compare`), with `RANDOMIZE 42` on both sides, and diffs the screenshots: the
-intro, the input screens, the city, the sun, the gorillas and the explosions match pixel for
-pixel. Animation timing matches within a few frames; the PC speaker uses the same notes, its
-timing drifts a little.
+city, the sun, the gorillas, the explosions and the text on the game screen match pixel for
+pixel. The text-mode screens (intro, names, game over) differ only in 19 characters of the
+8x16 font, which comes from a public-domain source instead of DOSBox (see
+[`fonts/README.md`](fonts/README.md)). Animation timing matches within a few frames; the PC
+speaker uses the same notes, its timing drifts a little.
 
 ## Running
 
@@ -73,7 +76,5 @@ game-toolkit-dosvideo.
 
 ## License
 
-EUPL-1.2, except the font files in [`fonts/`](fonts): the VGA BIOS character sets as DOSBox-X
-provides them, dumped through the `INT 43h` vector, under GPL-2.0-or-later (see
-[`fonts/README.md`](fonts/README.md)). The binaries embed those fonts, so the crate as a whole is
-`EUPL-1.2 AND GPL-2.0-or-later`.
+EUPL-1.2. The VGA fonts in [`fonts/`](fonts) are public domain, from Joseph Gil's fntcol16
+collection; its notice ships with them (see [`fonts/README.md`](fonts/README.md)).

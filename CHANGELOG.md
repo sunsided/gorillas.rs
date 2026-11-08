@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Licensed as EUPL-1.2 only again: the VGA fonts now come from Joseph Gil's public-domain
+  fntcol16 collection instead of DOSBox-X (GPL-2.0-or-later). The 8x14 font is the same; the 8x16
+  text-mode font differs from DOSBox's in 19 glyphs (`0 M T V-Z m v-x` and a few others).
+
 ## [0.2.0] - 2026-11-08
 
 ### Changed

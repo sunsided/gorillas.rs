@@ -1,2 +1,4 @@
-# Raw font bitmaps: no text conversion, no diffs. Licensed separately, see fonts/README.md.
+# Raw font bitmaps: no text conversion, no diffs. See fonts/README.md.
 fonts/*.bin binary
+# fntcol16's notice, kept byte for byte as distributed (CRLF, DOS code page).
+fonts/fntcol16-COPYLEFT.TXT -text -diff

@@ -27,8 +27,8 @@ use gfx::{Ega, H, Put, SCREEN9_ASPECT, Sprite, W};
 use play::{Music, Note, QUEUE_NOTES, Speaker};
 use rnd::Rnd;
 
-/// The VGA BIOS 8x16 character set, dumped from DOSBox through the `INT 43h` vector in
-/// `SCREEN 12`; loaded into text mode in place of `Font::vga()`, which differs in a few glyphs.
+/// The VGA 8x16 character set: fntcol16's `VGA-ROM.F16` (public domain, see fonts/README.md),
+/// loaded into text mode in place of `Font::vga()`. It differs from DOSBox's in 19 glyphs.
 static TEXT_FONT: std::sync::LazyLock<game_toolkit_dosvideo::Font> =
     std::sync::LazyLock::new(|| {
         game_toolkit_dosvideo::Font::from_raw(16, include_bytes!("../fonts/vga8x16.bin"))

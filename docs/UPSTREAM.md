@@ -7,11 +7,11 @@ Things the Gorillas port had to build or work around that belong in
 
 - **`Font::ega()` is not the IBM 8x14 ROM font.** It looks derived from the 8x16 VGA font;
   glyphs differ in shape and sit one row higher than what DOSBox (and real EGA/VGA BIOSes)
-  draw in 350-line modes. The port dumps DOSBox's font through the `INT 43h` vector
-  (`fonts/vga8x14.bin`) and uses that instead.
+  draw in 350-line modes. fntcol16's `VGA-ROM.F14` (public domain) is that font byte for
+  byte; the port uses it (`fonts/vga8x14.bin`).
 - **`Font::vga()` differs from the IBM 8x16 ROM font in a few glyphs** (the apostrophe, for
-  one). The port loads DOSBox's dump (`fonts/vga8x16.bin`) into text mode. Shipping the
-  ROM fonts (license permitting) would make text mode exact.
+  one). The exact 8x16 is in VileR's Oldschool PC Font Pack (CC-BY-SA-4.0); fntcol16's
+  public-domain `VGA-ROM.F16`, which the port uses, differs from it in 19 glyphs.
 - **Lopsided overscan border on VGA.** The border comes straight from the CRTC: blanking
   starts at `h_blank_start` and ends at `h_blank_end`. With the BIOS values for mode 10h
   (CR02 = 0x50 right after the 80 displayed characters, blank end at character 98 of 100)

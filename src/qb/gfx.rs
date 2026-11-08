@@ -10,8 +10,9 @@
 //! The shadow copy holds one color index per pixel; the runtime copies changed rows into the
 //! emulated EGA planes before time passes.
 
-/// The 8x14 character set the VGA BIOS uses in 350-line graphics modes, dumped from DOSBox
-/// through the `INT 43h` vector. It differs from `Font::ega()` in glyph shapes and baseline.
+/// The 8x14 character set the VGA BIOS uses in 350-line graphics modes: fntcol16's
+/// `VGA-ROM.F14` (public domain, see fonts/README.md), the same bytes DOSBox's BIOS uses. It
+/// differs from `Font::ega()` in glyph shapes and baseline.
 static FONT_8X14: &[u8; 3584] = include_bytes!("../../fonts/vga8x14.bin");
 
 /// Screen width in pixels.
